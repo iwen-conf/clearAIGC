@@ -5,8 +5,8 @@
 - [x] Review workspace and remote repository state
 - [x] Define `.gitignore` rules for local tools, build artifacts, and document outputs
 - [x] Remove legacy nested repository content (`baibaiAIGC/`)
-- [ ] Initialize Git, configure GitHub remote, and create the initial commit
-- [ ] Push the initial branch and verify upstream tracking
+- [x] Initialize Git, configure GitHub remote, and create the initial commit
+- [x] Push the initial branch and verify upstream tracking
 
 ## Architecture & Documentation
 
