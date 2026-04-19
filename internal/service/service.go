@@ -598,7 +598,7 @@ func buildChunkDiff(chunk domain.Chunk) domain.ChunkDiff {
 		Output:         chunk.Output,
 		Status:         chunk.Status,
 		CharDelta:      charDelta,
-		AIRate:         chunk.AIRate,
+		AIRate:         domain.EstimateAIRate(chunk.Text),
 		State:          normalizeChunkReviewState(chunk.State),
 		Checks:         append([]domain.CheckResult(nil), chunk.Checks...),
 	}

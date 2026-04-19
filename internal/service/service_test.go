@@ -114,10 +114,9 @@ func TestReadDiffBuildsChunkComparison(t *testing.T) {
 				ID:             "p0_c0",
 				ParagraphIndex: 0,
 				ChunkIndex:     0,
-				Text:           "Original text",
-				Output:         "Rewritten text",
+				Text:           "在当前数字化转型不断深入推进的大背景下，企业知识管理工作正在呈现出快速发展、持续演进以及多元融合的总体趋势。与此同时，越来越多的团队开始认识到，仅仅依靠传统的文档整理方式已经较难满足现实需求。综合来看，这一方向具有现实意义和实践价值。",
+				Output:         "在当前数字化转型不断深入推进的大背景下，企业知识管理工作正在呈现出快速发展、持续演进以及多元融合的总体趋势。与此同时，越来越多的团队开始认识到，仅仅依靠传统的文档整理方式已经较难满足现实需求。综合来看，这一方向具有现实意义和实践价值。a",
 				Status:         domain.ChunkRecovered,
-				AIRate:         0.25,
 				Checks: []domain.CheckResult{
 					{Type: domain.CheckDisallowedPattern, Passed: true},
 				},
@@ -142,11 +141,11 @@ func TestReadDiffBuildsChunkComparison(t *testing.T) {
 	if got := diff.Chunks[0].CharDelta; got != 1 {
 		t.Fatalf("char delta mismatch: %d", got)
 	}
-	if got := diff.Chunks[0].Output; got != "Rewritten text" {
+	if got := diff.Chunks[0].Output; got != "在当前数字化转型不断深入推进的大背景下，企业知识管理工作正在呈现出快速发展、持续演进以及多元融合的总体趋势。与此同时，越来越多的团队开始认识到，仅仅依靠传统的文档整理方式已经较难满足现实需求。综合来看，这一方向具有现实意义和实践价值。a" {
 		t.Fatalf("chunk output mismatch: %q", got)
 	}
-	if got := diff.Chunks[0].AIRate; got != 0.25 {
-		t.Fatalf("chunk aiRate mismatch: %v", got)
+	if got := diff.Chunks[0].AIRate; got < 0.45 {
+		t.Fatalf("chunk aiRate too low: %v", got)
 	}
 	if got := diff.Chunks[0].State; got != domain.ChunkReviewPending {
 		t.Fatalf("chunk state mismatch: %q", got)

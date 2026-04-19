@@ -17,6 +17,17 @@ import { formatCharDelta } from '@/lib/format'
 
 const { Text, Paragraph } = Typography
 
+type NormalizedChunkComparison = ChunkComparison & {
+  state: ChunkReviewState
+  status: ChunkStatus
+  aiRate: number
+}
+
+interface HighlightSegment {
+  text: string
+  changed: boolean
+}
+
 interface CardReviewPanelProps {
   comparison: RoundDiffResponse | null
   sessionId: string | null
@@ -50,6 +61,93 @@ function aiRateColor(rate: number): string {
   return 'default'
 }
 
+function normalizeChunkState(state: string | undefined): ChunkReviewState {
+  if (state === 'accepted' || state === 'rejected') return state
+  return 'pending'
+}
+
+function normalizeChunkStatus(status: string | undefined): ChunkStatus {
+  if (status === 'recovered' || status === 'failed') return status
+  return 'passed'
+}
+
+function normalizeAiRate(aiRate: number | undefined): number {
+  if (!Number.isFinite(aiRate)) return 0
+  const safeRate = aiRate ?? 0
+  return Math.min(1, Math.max(0, safeRate))
+}
+
+function normalizeChunk(chunk: ChunkComparison): NormalizedChunkComparison {
+  return {
+    ...chunk,
+    state: normalizeChunkState(chunk.state),
+    status: normalizeChunkStatus(chunk.status),
+    aiRate: normalizeAiRate(chunk.aiRate),
+  }
+}
+
+function normalizeComparableText(text: string): string {
+  return text.replace(/\r\n/g, '\n')
+}
+
+function hasVisibleRewriteChange(chunk: ChunkComparison): boolean {
+  return normalizeComparableText(chunk.input) !== normalizeComparableText(chunk.output)
+}
+
+function buildRewriteHighlightSegments(input: string, output: string): HighlightSegment[] {
+  const source = Array.from(normalizeComparableText(input))
+  const target = Array.from(normalizeComparableText(output))
+  if (target.length === 0) {
+    return []
+  }
+
+  const dp = Array.from({ length: source.length + 1 }, () => new Uint16Array(target.length + 1))
+  for (let sourceIndex = source.length - 1; sourceIndex >= 0; sourceIndex -= 1) {
+    for (let targetIndex = target.length - 1; targetIndex >= 0; targetIndex -= 1) {
+      dp[sourceIndex][targetIndex] =
+        source[sourceIndex] === target[targetIndex]
+          ? dp[sourceIndex + 1][targetIndex + 1] + 1
+          : Math.max(dp[sourceIndex + 1][targetIndex], dp[sourceIndex][targetIndex + 1])
+    }
+  }
+
+  const segments: HighlightSegment[] = []
+  let sourceIndex = 0
+  let targetIndex = 0
+
+  const pushSegment = (text: string, changed: boolean) => {
+    if (!text) return
+    const previous = segments.at(-1)
+    if (previous && previous.changed === changed) {
+      previous.text += text
+      return
+    }
+    segments.push({ text, changed })
+  }
+
+  while (targetIndex < target.length) {
+    if (sourceIndex < source.length && source[sourceIndex] === target[targetIndex]) {
+      pushSegment(target[targetIndex], false)
+      sourceIndex += 1
+      targetIndex += 1
+      continue
+    }
+
+    if (
+      targetIndex + 1 <= target.length &&
+      (sourceIndex === source.length || dp[sourceIndex][targetIndex + 1] >= dp[sourceIndex + 1][targetIndex])
+    ) {
+      pushSegment(target[targetIndex], true)
+      targetIndex += 1
+      continue
+    }
+
+    sourceIndex += 1
+  }
+
+  return segments
+}
+
 export function CardReviewPanel(props: CardReviewPanelProps) {
   const {
     comparison,
@@ -78,10 +176,26 @@ export function CardReviewPanel(props: CardReviewPanelProps) {
     )
   }
 
-  const total = comparison.chunks.length
-  const pending = comparison.chunks.filter((c) => c.state === 'pending').length
-  const accepted = comparison.chunks.filter((c) => c.state === 'accepted').length
-  const rejected = comparison.chunks.filter((c) => c.state === 'rejected').length
+  const chunks = comparison.chunks.map(normalizeChunk).filter(hasVisibleRewriteChange)
+  if (chunks.length === 0) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          minHeight: 240,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Empty description="当前轮次没有实际改动的片段，未改动内容已自动隐藏。" />
+      </div>
+    )
+  }
+
+  const total = chunks.length
+  const pending = chunks.filter((chunk) => chunk.state === 'pending').length
+  const accepted = chunks.filter((chunk) => chunk.state === 'accepted').length
+  const rejected = chunks.filter((chunk) => chunk.state === 'rejected').length
   const downloadReady = sessionId !== null && roundNumber !== null
 
   return (
@@ -143,7 +257,7 @@ export function CardReviewPanel(props: CardReviewPanelProps) {
         </Row>
       </Card>
 
-      {comparison.chunks.map((chunk) => (
+      {chunks.map((chunk) => (
         <ReviewCard
           key={chunk.id}
           chunk={chunk}
@@ -157,7 +271,7 @@ export function CardReviewPanel(props: CardReviewPanelProps) {
 }
 
 interface ReviewCardProps {
-  chunk: ChunkComparison
+  chunk: NormalizedChunkComparison
   busy: boolean
   onAccept: () => void
   onReject: () => void
@@ -167,6 +281,7 @@ function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
   const state = stateMeta[chunk.state]
   const status = statusMeta[chunk.status]
   const rateColor = aiRateColor(chunk.aiRate)
+  const rewriteSegments = buildRewriteHighlightSegments(chunk.input, chunk.output)
 
   return (
     <Card
@@ -241,7 +356,24 @@ function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
               润色后
             </Text>
             <Paragraph style={{ marginTop: 4, marginBottom: 0, whiteSpace: 'pre-wrap' }}>
-              {chunk.output || '—'}
+              {chunk.output
+                ? rewriteSegments.map((segment, index) =>
+                    segment.changed ? (
+                      <mark
+                        key={`${chunk.id}-segment-${index}`}
+                        style={{
+                          background: '#ffe58f',
+                          padding: 0,
+                          borderRadius: 2,
+                        }}
+                      >
+                        {segment.text}
+                      </mark>
+                    ) : (
+                      <span key={`${chunk.id}-segment-${index}`}>{segment.text}</span>
+                    ),
+                  )
+                : '—'}
             </Paragraph>
           </div>
         </Col>

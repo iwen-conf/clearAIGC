@@ -399,7 +399,7 @@ func (p *Pipeline) merge(_ context.Context, state *State) (*State, error) {
 		state.Manifest.Chunks[index].Output = state.FinalOutputs[index]
 		state.Manifest.Chunks[index].Status = domain.ChunkStatusFromReport(state.Reports[index])
 		state.Manifest.Chunks[index].Checks = append([]domain.CheckResult(nil), state.Reports[index].Checks...)
-		state.Manifest.Chunks[index].AIRate = aiRateFromChecks(state.Reports[index].Checks)
+		state.Manifest.Chunks[index].AIRate = domain.EstimateAIRate(state.Manifest.Chunks[index].Text)
 		state.Manifest.Chunks[index].State = domain.ChunkReviewPending
 		chunkMap[state.Manifest.Chunks[index].ID] = state.FinalOutputs[index]
 	}
@@ -484,17 +484,4 @@ func failedReasons(checks []domain.CheckResult) []string {
 		return []string{"The output did not pass quality review."}
 	}
 	return out
-}
-
-func aiRateFromChecks(checks []domain.CheckResult) float64 {
-	if len(checks) == 0 {
-		return 0
-	}
-	failed := 0
-	for _, check := range checks {
-		if !check.Passed {
-			failed++
-		}
-	}
-	return float64(failed) / float64(len(checks))
 }
