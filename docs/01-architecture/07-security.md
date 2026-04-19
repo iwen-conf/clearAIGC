@@ -1,4 +1,4 @@
-# clearAIGC — 安全与多租户
+# Naturalize — 安全与多租户
 
 ## 1. 认证
 

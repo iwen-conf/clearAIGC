@@ -1,6 +1,6 @@
-# clearAIGC — 文档中心
+# Naturalize — 文档中心
 
-**clearAIGC** 是一个高性能的中英文学术文档 AI 痕迹消除平台，基于 Go + Eino 框架构建。
+**Naturalize** 是一个高性能的中英文学术文档 AI 痕迹消除平台，基于 Go + Eino 框架构建。
 
 核心架构：**确定性工作流**（DAG 管线，保证输出可预测）+ **受限 ReAct Agent**（质量自愈，80%+ 自动修复率）。
 

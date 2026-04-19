@@ -1,8 +1,8 @@
-# clearAIGC — 总体设计
+# Naturalize — 总体设计
 
 ## 项目定位
 
-clearAIGC 是一个面向中英文学术论文、技术文档和课程作业的 **AI 痕迹消除平台**。它通过多轮结构化改写，将模板化、机械化的 AI 生成文本转化为自然的人类写作风格，同时严格保持原文的事实、术语、逻辑和结构完整性。
+Naturalize 是一个面向中英文学术论文、技术文档和课程作业的 **AI 痕迹消除平台**。它通过多轮结构化改写，将模板化、机械化的 AI 生成文本转化为自然的人类写作风格，同时严格保持原文的事实、术语、逻辑和结构完整性。
 
 系统采用 **确定性工作流 + 受限 ReAct Agent** 的混合架构，在保证输出可预测性的同时，利用 AI Agent 能力实现质量自愈。
 
@@ -156,7 +156,7 @@ type Checker interface {
 
 ## Eino 框架映射
 
-| clearAIGC 概念 | Eino API | 说明 |
+| Naturalize 概念 | Eino API | 说明 |
 | :--- | :--- | :--- |
 | 主处理管线 | `compose.Workflow` | DAG，`NodeTriggerMode=AllPredecessor`，不支持循环 |
 | ReAct 修复 Agent | `react.NewAgent` | 基于 `compose.Graph` 的循环，`MaxStep=10` |

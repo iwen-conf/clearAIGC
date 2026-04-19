@@ -1,4 +1,4 @@
-# clearAIGC — 可观测性与运维
+# Naturalize — 可观测性与运维
 
 ## 1. 三大支柱
 
@@ -15,7 +15,7 @@ import (
 // Eino Callback 自动注入 Span
 handler := &callbacks.HandlerBuilder{
     OnStartFn: func(ctx context.Context, info *callbacks.RunInfo, input callbacks.CallbackInput) context.Context {
-        tracer := otel.Tracer("clearaigc")
+        tracer := otel.Tracer("naturalize")
         ctx, span := tracer.Start(ctx, "node."+info.Name)
         span.SetAttributes(
             attribute.String("node.name", info.Name),
@@ -35,7 +35,7 @@ Trace 结构：
 
 ```
 [API Request] POST /sessions/{id}/start
-  └── [Workflow] clearaigc-pipeline
+  └── [Workflow] naturalize-pipeline
       ├── [Node] parse (12ms)
       ├── [Node] chunk (8ms)
       ├── [Node] batch_llm (4500ms)
@@ -58,41 +58,41 @@ Prometheus 指标通过 `/api/v1/metrics` 暴露：
 
 | 指标名 | 类型 | 标签 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `clearaigc_sessions_total` | Counter | `status`, `profile` | 会话总数 |
-| `clearaigc_sessions_active` | Gauge | `profile` | 当前活跃会话数 |
-| `clearaigc_rounds_total` | Counter | `status`, `round_number` | 轮次总数 |
-| `clearaigc_chunks_processed_total` | Counter | `status` | chunk 处理总数 |
-| `clearaigc_chunk_duration_seconds` | Histogram | `node` | 每个 chunk 的处理耗时 |
-| `clearaigc_document_size_bytes` | Histogram | `format` | 上传文档大小分布 |
+| `naturalize_sessions_total` | Counter | `status`, `profile` | 会话总数 |
+| `naturalize_sessions_active` | Gauge | `profile` | 当前活跃会话数 |
+| `naturalize_rounds_total` | Counter | `status`, `round_number` | 轮次总数 |
+| `naturalize_chunks_processed_total` | Counter | `status` | chunk 处理总数 |
+| `naturalize_chunk_duration_seconds` | Histogram | `node` | 每个 chunk 的处理耗时 |
+| `naturalize_document_size_bytes` | Histogram | `format` | 上传文档大小分布 |
 
 **LLM 指标**：
 
 | 指标名 | 类型 | 标签 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `clearaigc_llm_requests_total` | Counter | `provider`, `status` | LLM 调用总数 |
-| `clearaigc_llm_tokens_total` | Counter | `provider`, `type` | Token 消耗 (prompt/completion) |
-| `clearaigc_llm_latency_seconds` | Histogram | `provider` | LLM 调用延迟 |
-| `clearaigc_llm_cost_usd` | Counter | `provider`, `model` | LLM 调用费用估算 |
-| `clearaigc_provider_failover_total` | Counter | `from`, `to` | Provider 切换次数 |
+| `naturalize_llm_requests_total` | Counter | `provider`, `status` | LLM 调用总数 |
+| `naturalize_llm_tokens_total` | Counter | `provider`, `type` | Token 消耗 (prompt/completion) |
+| `naturalize_llm_latency_seconds` | Histogram | `provider` | LLM 调用延迟 |
+| `naturalize_llm_cost_usd` | Counter | `provider`, `model` | LLM 调用费用估算 |
+| `naturalize_provider_failover_total` | Counter | `from`, `to` | Provider 切换次数 |
 
 **质量指标**：
 
 | 指标名 | 类型 | 标签 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `clearaigc_quality_checks_total` | Counter | `check_type`, `passed` | 质量检查结果 |
-| `clearaigc_quality_score` | Histogram | `round_number`, `profile` | 质量评分分布 |
-| `clearaigc_react_recoveries_total` | Counter | `tool`, `success` | ReAct 恢复次数 |
-| `clearaigc_react_steps_total` | Histogram | `success` | ReAct Agent 步数分布 |
+| `naturalize_quality_checks_total` | Counter | `check_type`, `passed` | 质量检查结果 |
+| `naturalize_quality_score` | Histogram | `round_number`, `profile` | 质量评分分布 |
+| `naturalize_react_recoveries_total` | Counter | `tool`, `success` | ReAct 恢复次数 |
+| `naturalize_react_steps_total` | Histogram | `success` | ReAct Agent 步数分布 |
 
 **基础设施指标**：
 
 | 指标名 | 类型 | 标签 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `clearaigc_checkpoint_operations_total` | Counter | `operation` | CheckPoint 读写次数 |
-| `clearaigc_circuit_breaker_state` | Gauge | `provider` | 熔断器状态 (0=closed, 1=open, 2=half-open) |
-| `clearaigc_webhook_deliveries_total` | Counter | `event`, `status` | Webhook 投递状态 |
-| `clearaigc_cache_hit_total` | Counter | `cache_type` | 缓存命中次数 |
-| `clearaigc_cache_miss_total` | Counter | `cache_type` | 缓存未命中次数 |
+| `naturalize_checkpoint_operations_total` | Counter | `operation` | CheckPoint 读写次数 |
+| `naturalize_circuit_breaker_state` | Gauge | `provider` | 熔断器状态 (0=closed, 1=open, 2=half-open) |
+| `naturalize_webhook_deliveries_total` | Counter | `event`, `status` | Webhook 投递状态 |
+| `naturalize_cache_hit_total` | Counter | `cache_type` | 缓存命中次数 |
+| `naturalize_cache_miss_total` | Counter | `cache_type` | 缓存未命中次数 |
 
 ### 1.3 结构化日志 (Logging)
 
@@ -130,8 +130,8 @@ slog.Info("chunk processed",
 | :--- | :--- | :--- |
 | 可用性 | `1 - (5xx responses / total responses)` | 1m |
 | 处理成功率 | `completed sessions / (completed + failed sessions)` | 5m |
-| chunk 处理延迟 | `histogram_quantile(0.95, clearaigc_chunk_duration_seconds)` | 1m |
-| LLM 调用延迟 | `histogram_quantile(0.95, clearaigc_llm_latency_seconds)` | 1m |
+| chunk 处理延迟 | `histogram_quantile(0.95, naturalize_chunk_duration_seconds)` | 1m |
+| LLM 调用延迟 | `histogram_quantile(0.95, naturalize_llm_latency_seconds)` | 1m |
 | 质量通过率 | `passed checks / total checks` | 5m |
 
 ### 2.2 Service Level Objectives
@@ -148,10 +148,10 @@ slog.Info("chunk processed",
 
 ```yaml
 groups:
-  - name: clearaigc-critical
+  - name: naturalize-critical
     rules:
       - alert: LLMCircuitBreakerOpen
-        expr: clearaigc_circuit_breaker_state > 0
+        expr: naturalize_circuit_breaker_state > 0
         for: 1m
         labels:
           severity: critical
@@ -159,7 +159,7 @@ groups:
           summary: "LLM 熔断器打开 ({{ $labels.provider }})"
           
       - alert: CheckPointStoreUnavailable
-        expr: rate(clearaigc_checkpoint_operations_total{operation="error"}[5m]) > 0
+        expr: rate(naturalize_checkpoint_operations_total{operation="error"}[5m]) > 0
         for: 2m
         labels:
           severity: critical
@@ -167,19 +167,19 @@ groups:
           summary: "Redis CheckPointStore 不可用"
 
       - alert: AllProvidersDown
-        expr: count(clearaigc_circuit_breaker_state == 0) == 0
+        expr: count(naturalize_circuit_breaker_state == 0) == 0
         for: 1m
         labels:
           severity: critical
         annotations:
           summary: "所有 LLM Provider 不可用"
           
-  - name: clearaigc-warning
+  - name: naturalize-warning
     rules:
       - alert: HighChunkFailureRate
         expr: >
-          rate(clearaigc_quality_checks_total{passed="false"}[5m])
-          / rate(clearaigc_quality_checks_total[5m]) > 0.2
+          rate(naturalize_quality_checks_total{passed="false"}[5m])
+          / rate(naturalize_quality_checks_total[5m]) > 0.2
         for: 5m
         labels:
           severity: warning
@@ -187,7 +187,7 @@ groups:
           summary: "Quality Gate 失败率超过 20%"
           
       - alert: HighLLMLatency
-        expr: histogram_quantile(0.95, clearaigc_llm_latency_seconds) > 10
+        expr: histogram_quantile(0.95, naturalize_llm_latency_seconds) > 10
         for: 5m
         labels:
           severity: warning
@@ -195,7 +195,7 @@ groups:
           summary: "LLM P95 延迟超过 10s"
           
       - alert: HighReActSteps
-        expr: histogram_quantile(0.95, clearaigc_react_steps_total) > 8
+        expr: histogram_quantile(0.95, naturalize_react_steps_total) > 8
         for: 10m
         labels:
           severity: warning
@@ -203,7 +203,7 @@ groups:
           summary: "ReAct Agent P95 步数超过 8 步"
           
       - alert: ProviderFailoverFrequent
-        expr: rate(clearaigc_provider_failover_total[5m]) > 1
+        expr: rate(naturalize_provider_failover_total[5m]) > 1
         for: 5m
         labels:
           severity: warning
@@ -212,8 +212,8 @@ groups:
 
       - alert: WebhookDeliveryFailure
         expr: >
-          rate(clearaigc_webhook_deliveries_total{status="failed"}[5m])
-          / rate(clearaigc_webhook_deliveries_total[5m]) > 0.3
+          rate(naturalize_webhook_deliveries_total{status="failed"}[5m])
+          / rate(naturalize_webhook_deliveries_total[5m]) > 0.3
         for: 5m
         labels:
           severity: warning
@@ -291,7 +291,7 @@ services:
     build: .
     ports: ["8080:8080"]
     environment:
-      - DATABASE_URL=postgres://clearaigc:pass@postgres:5432/clearaigc
+      - DATABASE_URL=postgres://naturalize:pass@postgres:5432/naturalize
       - REDIS_URL=redis://redis:6379/0
       - LLM_PROVIDERS=openai:https://api.openai.com/v1
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
@@ -305,8 +305,8 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: clearaigc
-      POSTGRES_USER: clearaigc
+      POSTGRES_DB: naturalize
+      POSTGRES_USER: naturalize
       POSTGRES_PASSWORD: pass
     volumes: ["pgdata:/var/lib/postgresql/data"]
     ports: ["5432:5432"]
@@ -372,12 +372,12 @@ HPA 配置：
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: clearaigc
+  name: naturalize
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: clearaigc
+    name: naturalize
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -390,7 +390,7 @@ spec:
     - type: Pods
       pods:
         metric:
-          name: clearaigc_sessions_active
+          name: naturalize_sessions_active
         target:
           type: AverageValue
           averageValue: 20
@@ -452,13 +452,13 @@ COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w \
     -X main.version=${VERSION} \
     -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    -o /clearaigc ./cmd/server
+    -o /naturalize ./cmd/server
 
 # Runtime stage
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata
-COPY --from=builder /clearaigc /usr/local/bin/clearaigc
+COPY --from=builder /naturalize /usr/local/bin/naturalize
 COPY prompts/ /app/prompts/
 EXPOSE 8080
-ENTRYPOINT ["clearaigc"]
+ENTRYPOINT ["naturalize"]
 ```

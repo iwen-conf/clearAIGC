@@ -1,4 +1,4 @@
-# clearAIGC — 并发、存储与限流
+# Naturalize — 并发、存储与限流
 
 ## 1. 并发管理
 

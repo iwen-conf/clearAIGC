@@ -1,4 +1,4 @@
-# clearAIGC — 架构愿景
+# Naturalize — 架构愿景
 
 ## 核心原则
 
@@ -15,7 +15,7 @@
 graph TD
     Client[React Frontend / CLI] -->|HTTPS| GW[API Gateway<br/>Gin + Middleware]
     
-    subgraph clearAIGC Core
+    subgraph Naturalize Core
         GW --> Auth[Auth & Rate Limit]
         Auth --> Router[Request Router]
         

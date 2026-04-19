@@ -1,9 +1,9 @@
-# clearAIGC — 模块设计
+# Naturalize — 模块设计
 
 ## 1. 包结构
 
 ```text
-clearAIGC/
+Naturalize/
 ├── cmd/
 │   └── server/                      # 应用入口
 │       └── main.go                  # 依赖注入、启动/关闭编排

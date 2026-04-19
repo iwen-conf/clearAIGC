@@ -1,4 +1,4 @@
-# clearAIGC — Workflow 与 ReAct 策略
+# Naturalize — Workflow 与 ReAct 策略
 
 ## 1. 确定性管线（外层 Workflow）
 
@@ -95,7 +95,7 @@ wf.AddEdge("export", compose.END)
 
 runner, err := wf.Compile(ctx,
     compose.WithCheckPointStore(redisCheckPointStore),
-    compose.WithGraphName("clearaigc-pipeline"),
+    compose.WithGraphName("naturalize-pipeline"),
 )
 ```
 

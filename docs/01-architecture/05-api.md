@@ -1,4 +1,4 @@
-# clearAIGC — API 规范
+# Naturalize — API 规范
 
 ## 1. REST API
 
@@ -128,7 +128,7 @@
 
 ```json
 {
-  "url": "https://example.com/hooks/clearaigc",
+  "url": "https://example.com/hooks/naturalize",
   "secret": "whsec_...",
   "events": ["round.completed", "session.completed", "quality.alert"]
 }
@@ -137,10 +137,10 @@
 **Webhook Payload 签名**：
 
 ```
-X-ClearAIGC-Signature: sha256=<HMAC-SHA256(secret, payload)>
-X-ClearAIGC-Event: round.completed
-X-ClearAIGC-Delivery: <delivery-uuid>
-X-ClearAIGC-Timestamp: 1713264000
+X-Naturalize-Signature: sha256=<HMAC-SHA256(secret, payload)>
+X-Naturalize-Event: round.completed
+X-Naturalize-Delivery: <delivery-uuid>
+X-Naturalize-Timestamp: 1713264000
 ```
 
 ### 1.6 系统
