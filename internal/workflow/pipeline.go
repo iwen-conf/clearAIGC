@@ -170,7 +170,7 @@ func (p *Pipeline) batchLLM(ctx context.Context, state *State) (*State, error) {
 
 		var result *domain.ProviderResult
 		if p.rewriter != nil {
-			result, err = p.rewriter.ProcessChunk(ctx, requestID, chunk)
+			result, err = p.rewriter.ProcessChunk(ctx, requestID, chunk, prompt)
 			if err != nil {
 				result = nil
 			}
@@ -392,6 +392,14 @@ func (p *Pipeline) merge(_ context.Context, state *State) (*State, error) {
 	if len(state.FinalOutputs) != len(state.Manifest.Chunks) {
 		state.FinalOutputs = make([]string, len(state.Manifest.Chunks))
 		copy(state.FinalOutputs, state.RawOutputs)
+	}
+
+	for index := range state.Manifest.Chunks {
+		oldRate := domain.EstimateAIRate(state.Manifest.Chunks[index].Text)
+		newRate := domain.EstimateAIRate(state.FinalOutputs[index])
+		if newRate > oldRate {
+			state.FinalOutputs[index] = state.Manifest.Chunks[index].Text
+		}
 	}
 
 	chunkMap := make(map[string]string, len(state.Manifest.Chunks))

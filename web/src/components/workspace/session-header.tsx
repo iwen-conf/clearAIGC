@@ -85,7 +85,7 @@ export function SessionHeader({
           <Space size={4} wrap split={<Divider type="vertical" style={{ margin: 0 }} />}>
             <StatusPill status={session.status} data-testid="workspace-status-pill" />
             <Text type="secondary">
-              {session.promptProfile === 'cn' ? '中文模式' : '英文模式'}
+              {session.promptProfile === 'cn' ? '中文(双轮)' : session.promptProfile === 'cn_single' ? '中文(单轮)' : '英文模式'}
             </Text>
             <Text type="secondary">{formatBytes(session.fileSizeBytes)}</Text>
             <Text type="secondary">创建于 {formatDate(session.createdAt)}</Text>

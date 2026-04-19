@@ -7,9 +7,20 @@ import type {
   Round,
   RoundDiffResponse,
   Session,
+  SessionHistoryResponse,
+  SessionListResponse,
   SessionStateResponse,
+  SessionStatus,
   SessionSummary,
 } from './types'
+
+export interface ListSessionsParams {
+  page?: number
+  size?: number
+  status?: SessionStatus | ''
+  q?: string
+  sort?: '-created_at' | 'created_at' | '-updated_at' | 'updated_at'
+}
 
 type ErrorBody = {
   error?: {
@@ -51,6 +62,21 @@ export async function createSession(file: File, promptProfile: PromptProfile): P
 
 export async function getSession(sessionId: string): Promise<Session> {
   return request<Session>(`/api/v1/sessions/${sessionId}`)
+}
+
+export async function listSessions(params: ListSessionsParams = {}): Promise<SessionListResponse> {
+  const search = new URLSearchParams()
+  if (params.page) search.set('page', String(params.page))
+  if (params.size) search.set('size', String(params.size))
+  if (params.status) search.set('status', params.status)
+  if (params.q) search.set('q', params.q)
+  if (params.sort) search.set('sort', params.sort)
+  const qs = search.toString()
+  return request<SessionListResponse>(`/api/v1/sessions${qs ? `?${qs}` : ''}`)
+}
+
+export async function getSessionHistory(sessionId: string): Promise<SessionHistoryResponse> {
+  return request<SessionHistoryResponse>(`/api/v1/sessions/${sessionId}/history`)
 }
 
 export async function getSessionState(sessionId: string): Promise<SessionStateResponse> {

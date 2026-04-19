@@ -19,6 +19,12 @@
 | 7 | [可观测性与运维](../01-architecture/06-observability.md) | 指标体系、SLI/SLO、告警规则、Grafana Dashboard、部署架构 |
 | 8 | [安全与多租户](../01-architecture/07-security.md) | JWT/API Key 认证、RBAC、RLS 数据隔离、审计日志 |
 
+### 问题记录
+
+| 序号 | 文档 | 内容 |
+| :--- | :--- | :--- |
+| 1 | [AI 率与两轮润色问题清单](../03-findings/00-ai-rate-two-pass-issues.md) | 记录 AI 率命名、启发式评分、两轮流程与 agent 执行路径之间的已确认问题 |
+
 ### 交付计划
 
 | 序号 | 文档 | 内容 |
@@ -40,8 +46,10 @@ docs/
 │   ├── 05-api.md
 │   ├── 06-observability.md
 │   └── 07-security.md
-└── 02-roadmap/           # 交付计划
-    └── 00-phases.md
+├── 02-roadmap/           # 交付计划
+│   └── 00-phases.md
+└── 03-findings/          # 问题记录与核查结论
+    └── 00-ai-rate-two-pass-issues.md
 ```
 
 ## 核心特性一览

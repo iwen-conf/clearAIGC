@@ -1,5 +1,7 @@
-import { Alert, Col, Row, Space, Spin, Tabs, Typography } from 'antd'
+import { Alert, Button, Col, Row, Space, Spin, Tabs, Typography } from 'antd'
 import { PageContainer } from '@ant-design/pro-components'
+import { HistoryOutlined } from '@ant-design/icons'
+import { Link, useNavigate } from 'react-router-dom'
 import { useSession } from '@/hooks/use-session'
 import { UploadCard } from '@/components/workspace/upload-card'
 import { SessionHeader } from '@/components/workspace/session-header'
@@ -12,6 +14,7 @@ const { Text } = Typography
 
 export default function WorkspacePage() {
   const state = useSession()
+  const navigate = useNavigate()
 
   if (state.booting) {
     return (
@@ -28,6 +31,15 @@ export default function WorkspacePage() {
       <PageContainer
         title="开始一次新的润色"
         subTitle={<Text type="secondary">上传稿件,选择模式,系统将逐段润色并实时反馈进度</Text>}
+        extra={[
+          <Button
+            key="history"
+            icon={<HistoryOutlined />}
+            onClick={() => navigate('/history')}
+          >
+            历史记录
+          </Button>,
+        ]}
       >
         <UploadCard
           busy={state.busy}
@@ -35,12 +47,32 @@ export default function WorkspacePage() {
           message={state.message}
           onSubmit={state.start}
         />
+        <div style={{ textAlign: 'center', marginTop: 16 }}>
+          <Text type="secondary">
+            或从
+            <Link to="/history" style={{ margin: '0 4px' }}>
+              历史记录
+            </Link>
+            中继续之前的文档 →
+          </Text>
+        </div>
       </PageContainer>
     )
   }
 
   return (
-    <PageContainer header={{ title: '润色工作台', ghost: true }}>
+    <PageContainer
+      header={{ title: '润色工作台', ghost: true }}
+      extra={[
+        <Button
+          key="history"
+          icon={<HistoryOutlined />}
+          onClick={() => navigate('/history')}
+        >
+          历史记录
+        </Button>,
+      ]}
+    >
       <SessionHeader
         session={state.session}
         busy={state.busy}

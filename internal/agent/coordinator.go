@@ -27,6 +27,7 @@ You are the Workflow Controller for an academic text processing pipeline. Your O
 1. DO NOT rewrite the text yourself.
 2. You are a machine gateway. Do not output conversational text, greetings, or explanations.
 3. Your output must strictly be the invocation of available tools.
+4. When identifying generic vocabulary, do NOT replace them with standard academic transitions (e.g. "综合来看", "进一步来说", "意义", "价值", "层面"). The goal is to make it sound human, not artificially academic.
 
 [Workflow]
 1. Analyze the input text.
@@ -69,7 +70,7 @@ type coordinatorPayload struct {
 // ProcessChunk runs the coordinator ReAct loop for one chunk. Returns the
 // rewritten text plus the aggregate token cost. Returns ErrCoordinatorNotConfigured
 // when the coordinator is missing credentials so the caller can fall back.
-func (c *Coordinator) ProcessChunk(ctx context.Context, requestID string, chunk domain.Chunk) (*domain.ProviderResult, error) {
+func (c *Coordinator) ProcessChunk(ctx context.Context, requestID string, chunk domain.Chunk, roundPrompt string) (*domain.ProviderResult, error) {
 	chatConfig, ok := c.registry.CoordinatorChatConfig()
 	if !ok {
 		return nil, ErrCoordinatorNotConfigured
@@ -164,7 +165,7 @@ func (c *Coordinator) ProcessChunk(ctx context.Context, requestID string, chunk 
 	}
 
 	msg, err := reactAgent.Generate(ctx, []*schema.Message{
-		schema.UserMessage(fmt.Sprintf("[CHUNK_ID]\n%s\n\n[TEXT]\n%s", chunk.ID, chunk.Text)),
+		schema.UserMessage(fmt.Sprintf("[ROUND_PROMPT]\n%s\n\n[CHUNK_ID]\n%s\n\n[TEXT]\n%s", roundPrompt, chunk.ID, chunk.Text)),
 	})
 	if err != nil {
 		return nil, err

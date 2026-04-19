@@ -32,6 +32,7 @@ type SessionProgressSnapshot struct {
 type SessionTimelineEntry struct {
 	ID        string       `json:"id"`
 	SessionID uuid.UUID    `json:"-"`
+	Round     int          `json:"round,omitempty"`
 	Tone      TimelineTone `json:"tone"`
 	Title     string       `json:"title"`
 	Detail    string       `json:"detail"`

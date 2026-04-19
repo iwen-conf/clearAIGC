@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -130,12 +132,32 @@ func (h *Handler) CreateSessionBatch(c *gin.Context) {
 }
 
 func (h *Handler) ListSessions(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	page, err := parsePositiveQuery(c, "page", 1)
+	if err != nil {
+		writeError(c, service.ErrInvalidRequest)
+		return
+	}
+	size, err := parsePositiveQuery(c, "size", 20)
+	if err != nil {
+		writeError(c, service.ErrInvalidRequest)
+		return
+	}
+	if size > 100 {
+		size = 100
+	}
+
+	query := strings.TrimSpace(c.Query("q"))
+	if utf8.RuneCountInString(query) > 128 {
+		writeError(c, service.ErrInvalidRequest)
+		return
+	}
+
 	items, total, err := h.service.ListSessions(c.Request.Context(), domain.SessionListFilter{
 		Page:   page,
 		Size:   size,
-		Status: domain.SessionStatus(c.Query("status")),
+		Status: domain.SessionStatus(strings.TrimSpace(c.Query("status"))),
+		Query:  query,
+		Sort:   strings.TrimSpace(c.Query("sort")),
 	})
 	if err != nil {
 		writeError(c, err)
@@ -143,7 +165,7 @@ func (h *Handler) ListSessions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"items": items,
+		"items": coalesceSessionListItems(items),
 		"total": total,
 		"page":  page,
 		"size":  size,
@@ -174,6 +196,19 @@ func (h *Handler) GetSessionState(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, state)
+}
+
+func (h *Handler) GetSessionHistory(c *gin.Context) {
+	sessionID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	history, err := h.service.ReadHistory(c.Request.Context(), sessionID)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, history)
 }
 
 func (h *Handler) DeleteSession(c *gin.Context) {
@@ -442,6 +477,26 @@ func writeError(c *gin.Context, err error) {
 			"details": gin.H{},
 		},
 	})
+}
+
+func parsePositiveQuery(c *gin.Context, key string, fallback int) (int, error) {
+	raw := strings.TrimSpace(c.Query(key))
+	if raw == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		return 0, service.ErrInvalidRequest
+	}
+	return value, nil
+}
+
+func coalesceSessionListItems(items []domain.SessionListItem) []domain.SessionListItem {
+	if items == nil {
+		return []domain.SessionListItem{}
+	}
+	return items
 }
 
 func (h *Handler) updateCard(c *gin.Context, fn func(context.Context, uuid.UUID, int, string) (*domain.ChunkDiff, error)) {

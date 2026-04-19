@@ -49,6 +49,7 @@ func (p *TrackingPublisher) recordEvent(ctx context.Context, sessionID uuid.UUID
 		}
 		return p.state.AppendTimeline(ctx, &domain.SessionTimelineEntry{
 			SessionID: sessionID,
+			Round:     payload.Round,
 			Tone:      domain.TimelineToneNeutral,
 			Title:     fmt.Sprintf("第 %d 轮 · %s", payload.Round, payload.Phase),
 			Detail:    fmt.Sprintf("%d/%d 片段已完成 · %s", payload.CompletedChunks, payload.TotalChunks, payload.ProviderUsed),
@@ -60,7 +61,9 @@ func (p *TrackingPublisher) recordEvent(ctx context.Context, sessionID uuid.UUID
 		if err != nil {
 			return err
 		}
+		round := 0
 		if existing, getErr := p.state.GetProgress(ctx, sessionID); getErr == nil {
+			round = existing.Round
 			existing.Phase = "quality-alert"
 			if err := p.state.UpsertProgress(ctx, existing); err != nil {
 				return err
@@ -68,6 +71,7 @@ func (p *TrackingPublisher) recordEvent(ctx context.Context, sessionID uuid.UUID
 		}
 		return p.state.AppendTimeline(ctx, &domain.SessionTimelineEntry{
 			SessionID: sessionID,
+			Round:     round,
 			Tone:      domain.TimelineToneWarning,
 			Title:     "质量检查提示",
 			Detail:    payload.Reason,
@@ -82,7 +86,9 @@ func (p *TrackingPublisher) recordEvent(ctx context.Context, sessionID uuid.UUID
 		if err != nil {
 			return err
 		}
+		round := 0
 		if existing, getErr := p.state.GetProgress(ctx, sessionID); getErr == nil {
+			round = existing.Round
 			existing.Phase = "recovery"
 			if err := p.state.UpsertProgress(ctx, existing); err != nil {
 				return err
@@ -98,6 +104,7 @@ func (p *TrackingPublisher) recordEvent(ctx context.Context, sessionID uuid.UUID
 		}
 		return p.state.AppendTimeline(ctx, &domain.SessionTimelineEntry{
 			SessionID: sessionID,
+			Round:     round,
 			Tone:      tone,
 			Title:     title,
 			Detail:    detail,
@@ -128,6 +135,7 @@ func (p *TrackingPublisher) recordEvent(ctx context.Context, sessionID uuid.UUID
 		}
 		return p.state.AppendTimeline(ctx, &domain.SessionTimelineEntry{
 			SessionID: sessionID,
+			Round:     payload.Round,
 			Tone:      domain.TimelineToneSuccess,
 			Title:     fmt.Sprintf("第 %d 轮完成", payload.Round),
 			Detail:    fmt.Sprintf("%d/%d 片段就绪 · 消耗 %d tokens", payload.PassedChunks+payload.RecoveredChunks, payload.ChunkCount, payload.TotalTokens),
@@ -169,6 +177,7 @@ func (p *TrackingPublisher) recordEvent(ctx context.Context, sessionID uuid.UUID
 		}
 		return p.state.AppendTimeline(ctx, &domain.SessionTimelineEntry{
 			SessionID: sessionID,
+			Round:     payload.Round,
 			Tone:      domain.TimelineToneWarning,
 			Title:     "处理已暂停",
 			Detail:    detail,
@@ -184,7 +193,9 @@ func (p *TrackingPublisher) recordEvent(ctx context.Context, sessionID uuid.UUID
 			SessionID: sessionID,
 			Phase:     "error",
 		}
+		round := 0
 		if existing, getErr := p.state.GetProgress(ctx, sessionID); getErr == nil {
+			round = existing.Round
 			snapshot.Round = existing.Round
 			snapshot.CompletedChunks = existing.CompletedChunks
 			snapshot.TotalChunks = existing.TotalChunks
@@ -199,6 +210,7 @@ func (p *TrackingPublisher) recordEvent(ctx context.Context, sessionID uuid.UUID
 		}
 		return p.state.AppendTimeline(ctx, &domain.SessionTimelineEntry{
 			SessionID: sessionID,
+			Round:     round,
 			Tone:      domain.TimelineToneError,
 			Title:     "处理出错",
 			Detail:    payload.Message,

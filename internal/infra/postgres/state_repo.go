@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -92,12 +93,55 @@ func (r *SessionStateRepository) GetProgress(ctx context.Context, sessionID uuid
 	return &snapshot, nil
 }
 
+func (r *SessionStateRepository) ListProgressBySessionIDs(ctx context.Context, sessionIDs []uuid.UUID) (map[uuid.UUID]*domain.SessionProgressSnapshot, error) {
+	progressBySession := make(map[uuid.UUID]*domain.SessionProgressSnapshot, len(sessionIDs))
+	if len(sessionIDs) == 0 {
+		return progressBySession, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT session_id, round_number, phase, completed_chunks, total_chunks, percent,
+		       chunk_id, paragraph_index, chunk_index, provider_used, updated_at
+		FROM session_progress
+		WHERE session_id = ANY($1)
+	`, sessionIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var snapshot domain.SessionProgressSnapshot
+		if err := rows.Scan(
+			&snapshot.SessionID,
+			&snapshot.Round,
+			&snapshot.Phase,
+			&snapshot.CompletedChunks,
+			&snapshot.TotalChunks,
+			&snapshot.Percent,
+			&snapshot.ChunkID,
+			&snapshot.ParagraphIndex,
+			&snapshot.ChunkIndex,
+			&snapshot.ProviderUsed,
+			&snapshot.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		copySnapshot := snapshot
+		progressBySession[snapshot.SessionID] = &copySnapshot
+	}
+
+	return progressBySession, rows.Err()
+}
+
 func (r *SessionStateRepository) AppendTimeline(ctx context.Context, entry *domain.SessionTimelineEntry) error {
 	if entry == nil {
 		return nil
 	}
 
 	payload, err := json.Marshal(map[string]any{
+		"round":  entry.Round,
 		"tone":   entry.Tone,
 		"title":  entry.Title,
 		"detail": entry.Detail,
@@ -118,24 +162,35 @@ func (r *SessionStateRepository) AppendTimeline(ctx context.Context, entry *doma
 	return err
 }
 
-func (r *SessionStateRepository) ListTimeline(ctx context.Context, sessionID uuid.UUID, limit int) ([]domain.SessionTimelineEntry, error) {
-	if limit <= 0 {
-		limit = 50
+func (r *SessionStateRepository) ListTimeline(ctx context.Context, sessionID uuid.UUID, limit int, ascending bool) ([]domain.SessionTimelineEntry, error) {
+	order := "DESC"
+	if ascending {
+		order = "ASC"
 	}
 
-	rows, err := r.pool.Query(ctx, `
+	query := fmt.Sprintf(`
 		SELECT id, detail, created_at
 		FROM audit_log
 		WHERE session_id = $1 AND action = 'timeline.entry'
-		ORDER BY created_at DESC, id DESC
-		LIMIT $2
-	`, sessionID, limit)
+		ORDER BY created_at %s, id %s
+	`, order, order)
+	args := []any{sessionID}
+	if limit > 0 {
+		query += ` LIMIT $2`
+		args = append(args, limit)
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	entries := make([]domain.SessionTimelineEntry, 0, limit)
+	capacity := 0
+	if limit > 0 {
+		capacity = limit
+	}
+	entries := make([]domain.SessionTimelineEntry, 0, capacity)
 	for rows.Next() {
 		var id int64
 		var detailJSON []byte
@@ -145,6 +200,7 @@ func (r *SessionStateRepository) ListTimeline(ctx context.Context, sessionID uui
 		}
 
 		var detail struct {
+			Round  int                 `json:"round"`
 			Tone   domain.TimelineTone `json:"tone"`
 			Title  string              `json:"title"`
 			Detail string              `json:"detail"`
@@ -156,6 +212,7 @@ func (r *SessionStateRepository) ListTimeline(ctx context.Context, sessionID uui
 		entries = append(entries, domain.SessionTimelineEntry{
 			ID:        strconv.FormatInt(id, 10),
 			SessionID: sessionID,
+			Round:     detail.Round,
 			Tone:      detail.Tone,
 			Title:     detail.Title,
 			Detail:    detail.Detail,

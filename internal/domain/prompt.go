@@ -36,6 +36,12 @@ var Profiles = map[string]PromptProfile{
 		Metric:    ChunkMetricChar,
 		Prompts:   []string{"prompts/round1_cn.md", "prompts/round2_cn.md"},
 	},
+	"cn_single": {
+		Name:      "cn_single",
+		MaxRounds: 1,
+		Metric:    ChunkMetricChar,
+		Prompts:   []string{"prompts/round1_cn.md"},
+	},
 	"en": {
 		Name:      "en",
 		MaxRounds: 1,

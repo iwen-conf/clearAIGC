@@ -37,8 +37,9 @@ type QualityRepository interface {
 type SessionStateRepository interface {
 	UpsertProgress(ctx context.Context, snapshot *SessionProgressSnapshot) error
 	GetProgress(ctx context.Context, sessionID uuid.UUID) (*SessionProgressSnapshot, error)
+	ListProgressBySessionIDs(ctx context.Context, sessionIDs []uuid.UUID) (map[uuid.UUID]*SessionProgressSnapshot, error)
 	AppendTimeline(ctx context.Context, entry *SessionTimelineEntry) error
-	ListTimeline(ctx context.Context, sessionID uuid.UUID, limit int) ([]SessionTimelineEntry, error)
+	ListTimeline(ctx context.Context, sessionID uuid.UUID, limit int, ascending bool) ([]SessionTimelineEntry, error)
 	DeleteForSession(ctx context.Context, sessionID uuid.UUID) error
 }
 
@@ -64,7 +65,7 @@ type RecoveryAgent interface {
 }
 
 type Rewriter interface {
-	ProcessChunk(ctx context.Context, requestID string, chunk Chunk) (*ProviderResult, error)
+	ProcessChunk(ctx context.Context, requestID string, chunk Chunk, prompt string) (*ProviderResult, error)
 }
 
 type Parser interface {
@@ -79,6 +80,8 @@ type SessionListFilter struct {
 	Page   int
 	Size   int
 	Status SessionStatus
+	Query  string
+	Sort   string
 }
 
 type LLMRequest struct {

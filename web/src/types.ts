@@ -1,4 +1,4 @@
-export type PromptProfile = 'cn' | 'en'
+export type PromptProfile = 'cn' | 'cn_single' | 'en'
 export type SessionStatus = 'pending' | 'processing' | 'paused' | 'completed' | 'failed'
 export type RoundStatus = SessionStatus
 
@@ -149,10 +149,53 @@ export interface ErrorPayload {
 
 export interface TimelineEntry {
   id: string
+  round?: number
   tone: 'neutral' | 'warning' | 'success' | 'error'
   title: string
   detail: string
   timestamp: number
+}
+
+export interface SessionListMetrics {
+  completedRounds: number
+  totalRounds: number
+  totalTokens: number
+  lastActivityAt: string
+}
+
+export interface SessionListItem {
+  session: Session
+  progress: ProgressPayload | null
+  metrics: SessionListMetrics
+}
+
+export interface SessionListResponse {
+  items: SessionListItem[]
+  total: number
+  page: number
+  size: number
+}
+
+export interface RoundSummary {
+  chunkCount: number
+  passedChunks: number
+  recoveredChunks: number
+  failedChunks: number
+  scoreTotal: number | null
+  durationSeconds: number
+}
+
+export interface RoundHistoryEntry {
+  round: Round
+  summary: RoundSummary
+}
+
+export interface SessionHistoryResponse {
+  session: Session
+  progress: ProgressPayload | null
+  metrics: SessionListMetrics
+  rounds: RoundHistoryEntry[]
+  timeline: TimelineEntry[]
 }
 
 export type AgentName = 'coordinator' | 'lexical_mutator' | 'syntax_rebuilder'

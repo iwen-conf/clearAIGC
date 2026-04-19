@@ -104,8 +104,17 @@ export function UploadCard({ busy, error, message, onSubmit }: UploadCardProps) 
                 value: 'cn',
                 label: (
                   <span data-testid="workspace-mode-cn">
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>中文模式</div>
-                    <div style={{ fontSize: 12, opacity: 0.65 }}>两轮润色 · 自然学术中文</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>中文(双轮)</div>
+                    <div style={{ fontSize: 12, opacity: 0.65 }}>两轮精修 · 自然学术中文</div>
+                  </span>
+                ),
+              },
+              {
+                value: 'cn_single',
+                label: (
+                  <span data-testid="workspace-mode-cn-single">
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>中文(单轮)</div>
+                    <div style={{ fontSize: 12, opacity: 0.65 }}>单轮快修 · 自然学术中文</div>
                   </span>
                 ),
               },

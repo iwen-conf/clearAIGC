@@ -2,16 +2,20 @@ import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-do
 import { ProLayout } from '@ant-design/pro-components'
 import {
   FileTextOutlined,
+  HistoryOutlined,
   SettingOutlined,
   ThunderboltFilled,
 } from '@ant-design/icons'
 import WorkspacePage from '@/pages/WorkspacePage'
 import SettingsPage from '@/pages/SettingsPage'
+import HistoryPage from '@/pages/HistoryPage'
+import HistoryDetailPage from '@/pages/HistoryDetailPage'
 
 const menuRoute = {
   path: '/',
   routes: [
     { path: '/', name: '工作台', icon: <FileTextOutlined /> },
+    { path: '/history', name: '历史记录', icon: <HistoryOutlined /> },
     { path: '/settings', name: '智能体配置', icon: <SettingOutlined /> },
   ],
 }
@@ -42,6 +46,8 @@ function Shell() {
     >
       <Routes>
         <Route path="/" element={<WorkspacePage />} />
+        <Route path="/history" element={<HistoryPage />} />
+        <Route path="/history/:sessionId" element={<HistoryDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </ProLayout>

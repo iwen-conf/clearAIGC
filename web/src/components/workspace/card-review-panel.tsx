@@ -9,6 +9,7 @@ import {
   Space,
   Statistic,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd'
 import type { ChunkComparison, ChunkReviewState, ChunkStatus, RoundDiffResponse } from '@/types'
@@ -44,6 +45,7 @@ interface CardReviewPanelProps {
   onAccept: (cardId: string) => void
   onReject: (cardId: string) => void
   onApplyAll: () => void
+  readOnly?: boolean
 }
 
 const stateMeta: Record<ChunkReviewState, { label: string; color: string }> = {
@@ -235,6 +237,7 @@ export function CardReviewPanel(props: CardReviewPanelProps) {
     onAccept,
     onReject,
     onApplyAll,
+    readOnly = false,
   } = props
   const [selection, setSelection] = useState<'all' | 'accepted'>('all')
 
@@ -297,14 +300,16 @@ export function CardReviewPanel(props: CardReviewPanelProps) {
           </Col>
           <Col xs={24} md={10}>
             <Space direction="vertical" size={8} style={{ width: '100%', alignItems: 'flex-end' }}>
-              <Button
-                type="primary"
-                loading={applyingAll}
-                disabled={pending === 0}
-                onClick={onApplyAll}
-              >
-                全部应用{pending > 0 ? ` (${pending})` : ''}
-              </Button>
+              {!readOnly && (
+                <Button
+                  type="primary"
+                  loading={applyingAll}
+                  disabled={pending === 0}
+                  onClick={onApplyAll}
+                >
+                  全部应用{pending > 0 ? ` (${pending})` : ''}
+                </Button>
+              )}
               <Space size={8} wrap>
                 <Segmented
                   size="small"
@@ -339,6 +344,7 @@ export function CardReviewPanel(props: CardReviewPanelProps) {
           key={chunk.id}
           chunk={chunk}
           busy={cardBusyId === chunk.id}
+          readOnly={readOnly}
           onAccept={() => onAccept(chunk.id)}
           onReject={() => onReject(chunk.id)}
         />
@@ -350,11 +356,12 @@ export function CardReviewPanel(props: CardReviewPanelProps) {
 interface ReviewCardProps {
   chunk: NormalizedChunkComparison
   busy: boolean
+  readOnly?: boolean
   onAccept: () => void
   onReject: () => void
 }
 
-function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
+function ReviewCard({ chunk, busy, readOnly = false, onAccept, onReject }: ReviewCardProps) {
   const state = stateMeta[chunk.state]
   const status = statusMeta[chunk.status]
   const originalRateColor = aiRateColor(chunk.aiRate)
@@ -375,15 +382,19 @@ function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
             <Text strong>
               片段 {chunk.chunkIndex + 1} · {formatParagraphLabel(chunk.paragraphIndex + 1)}
             </Text>
-            <Text type="secondary">检测Agent：{chunk.detector}</Text>
+            <Text type="secondary">评估规则：{chunk.detector}</Text>
           </Space>
           <Space size={8} wrap>
             <Text type="secondary">原文：</Text>
-            <Tag color={originalRateColor}>AI率 {aiRatePercent(chunk.aiRate)}</Tag>
+            <Tooltip title="内部启发式风险分数，非外部AI检测概率">
+              <Tag color={originalRateColor}>启发风险 {aiRatePercent(chunk.aiRate)}</Tag>
+            </Tooltip>
           </Space>
           <Space size={8} wrap>
             <Text type="secondary">润色后：</Text>
-            <Tag color={outputRateColor}>AI率 {aiRatePercent(chunk.outputAiRate)}</Tag>
+            <Tooltip title="内部启发式风险分数，非外部AI检测概率">
+              <Tag color={outputRateColor}>启发风险 {aiRatePercent(chunk.outputAiRate)}</Tag>
+            </Tooltip>
             <Tag color={status.color}>{status.label}</Tag>
             <Tag color={state.color}>{state.label}</Tag>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -393,24 +404,26 @@ function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
         </div>
       }
       extra={
-        <Space size={8}>
-          <Button
-            size="small"
-            type={chunk.state === 'accepted' ? 'primary' : 'default'}
-            loading={busy}
-            onClick={onAccept}
-          >
-            接受
-          </Button>
-          <Button
-            size="small"
-            danger={chunk.state === 'rejected'}
-            loading={busy}
-            onClick={onReject}
-          >
-            拒绝
-          </Button>
-        </Space>
+        readOnly ? null : (
+          <Space size={8}>
+            <Button
+              size="small"
+              type={chunk.state === 'accepted' ? 'primary' : 'default'}
+              loading={busy}
+              onClick={onAccept}
+            >
+              接受
+            </Button>
+            <Button
+              size="small"
+              danger={chunk.state === 'rejected'}
+              loading={busy}
+              onClick={onReject}
+            >
+              拒绝
+            </Button>
+          </Space>
+        )
       }
     >
       <Space size={8} wrap style={{ marginBottom: 12 }}>

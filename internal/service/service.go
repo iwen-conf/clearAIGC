@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -136,8 +137,38 @@ func (s *Service) GetSession(ctx context.Context, sessionID uuid.UUID) (*domain.
 	return session, nil
 }
 
-func (s *Service) ListSessions(ctx context.Context, filter domain.SessionListFilter) ([]domain.Session, int, error) {
-	return s.sessions.List(ctx, filter)
+func (s *Service) ListSessions(ctx context.Context, filter domain.SessionListFilter) ([]domain.SessionListItem, int, error) {
+	sessions, total, err := s.sessions.List(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	progressBySession := map[uuid.UUID]*domain.SessionProgressSnapshot{}
+	if s.states != nil {
+		ids := make([]uuid.UUID, 0, len(sessions))
+		for _, session := range sessions {
+			ids = append(ids, session.ID)
+		}
+
+		progressBySession, err = s.states.ListProgressBySessionIDs(ctx, ids)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	items := make([]domain.SessionListItem, 0, len(sessions))
+	for index := range sessions {
+		session := sessions[index]
+		progress := progressBySession[session.ID]
+		copySession := session
+		items = append(items, domain.SessionListItem{
+			Session:  &copySession,
+			Progress: progress,
+			Metrics:  buildSessionListMetrics(copySession, progress),
+		})
+	}
+
+	return items, total, nil
 }
 
 func (s *Service) DeleteSession(ctx context.Context, sessionID uuid.UUID) error {
@@ -350,7 +381,7 @@ func (s *Service) ReadState(ctx context.Context, sessionID uuid.UUID) (*domain.S
 			return nil, progressErr
 		}
 
-		timeline, timelineErr := s.states.ListTimeline(ctx, sessionID, 100)
+		timeline, timelineErr := s.states.ListTimeline(ctx, sessionID, 100, false)
 		if timelineErr != nil {
 			return nil, timelineErr
 		}
@@ -378,6 +409,72 @@ func (s *Service) ReadState(ctx context.Context, sessionID uuid.UUID) (*domain.S
 	}
 	state.Comparison = diff
 	return state, nil
+}
+
+func (s *Service) ReadHistory(ctx context.Context, sessionID uuid.UUID) (*domain.SessionHistory, error) {
+	session, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	history := &domain.SessionHistory{
+		Session:  session,
+		Metrics:  buildSessionListMetrics(*session, nil),
+		Rounds:   make([]domain.RoundHistoryEntry, 0, len(session.Rounds)),
+		Timeline: []domain.SessionTimelineEntry{},
+	}
+
+	if s.states != nil {
+		progress, progressErr := s.states.GetProgress(ctx, sessionID)
+		if progressErr == nil {
+			history.Progress = progress
+			history.Metrics = buildSessionListMetrics(*session, progress)
+		} else if !errors.Is(progressErr, ipostgres.ErrNotFound) {
+			return nil, progressErr
+		}
+
+		timeline, timelineErr := s.states.ListTimeline(ctx, sessionID, 0, true)
+		if timelineErr != nil {
+			return nil, timelineErr
+		}
+		history.Timeline = timeline
+	}
+
+	sort.Slice(session.Rounds, func(i, j int) bool {
+		return session.Rounds[i].Number < session.Rounds[j].Number
+	})
+
+	for index := range session.Rounds {
+		round := session.Rounds[index]
+		summary := buildRoundHistorySummary(round)
+
+		manifest, manifestErr := s.manifests.GetByRoundID(ctx, round.ID)
+		switch {
+		case manifestErr == nil:
+			summary.ChunkCount = len(manifest.Chunks)
+			for _, chunk := range manifest.Chunks {
+				switch chunk.Status {
+				case domain.ChunkRecovered:
+					summary.RecoveredChunks++
+				case domain.ChunkFailed:
+					summary.FailedChunks++
+				default:
+					summary.PassedChunks++
+				}
+			}
+		case errors.Is(manifestErr, ipostgres.ErrNotFound):
+		default:
+			return nil, manifestErr
+		}
+
+		copyRound := round
+		history.Rounds = append(history.Rounds, domain.RoundHistoryEntry{
+			Round:   &copyRound,
+			Summary: summary,
+		})
+	}
+
+	return history, nil
 }
 
 func (s *Service) ListCards(ctx context.Context, sessionID uuid.UUID, roundNumber int) (*domain.RoundDiff, error) {
@@ -641,6 +738,7 @@ func (s *Service) recordRoundStart(ctx context.Context, sessionID uuid.UUID, rou
 	}
 	_ = s.states.AppendTimeline(ctx, &domain.SessionTimelineEntry{
 		SessionID: sessionID,
+		Round:     roundNumber,
 		Tone:      domain.TimelineToneNeutral,
 		Title:     title,
 		Detail:    detail,
@@ -669,10 +767,58 @@ func (s *Service) recordRoundResume(ctx context.Context, sessionID uuid.UUID, ro
 	_ = s.states.UpsertProgress(ctx, snapshot)
 	_ = s.states.AppendTimeline(ctx, &domain.SessionTimelineEntry{
 		SessionID: sessionID,
+		Round:     roundNumber,
 		Tone:      domain.TimelineToneNeutral,
 		Title:     "已继续处理",
 		Detail:    fmt.Sprintf("第 %d 轮已恢复。", roundNumber),
 	})
+}
+
+func buildSessionListMetrics(session domain.Session, progress *domain.SessionProgressSnapshot) domain.SessionListMetrics {
+	metrics := domain.SessionListMetrics{
+		TotalRounds:    totalRoundsForProfile(session.PromptProfile),
+		LastActivityAt: session.UpdatedAt,
+	}
+
+	for _, round := range session.Rounds {
+		if round.Status == domain.RoundCompleted {
+			metrics.CompletedRounds++
+		}
+		metrics.TotalTokens += round.TotalTokens
+		if round.CompletedAt != nil {
+			metrics.LastActivityAt = maxActivityTime(metrics.LastActivityAt, *round.CompletedAt)
+		}
+	}
+
+	if progress != nil {
+		metrics.LastActivityAt = maxActivityTime(metrics.LastActivityAt, progress.UpdatedAt)
+	}
+
+	return metrics
+}
+
+func buildRoundHistorySummary(round domain.Round) domain.RoundHistorySummary {
+	summary := domain.RoundHistorySummary{
+		ScoreTotal: round.ScoreTotal,
+	}
+	if round.StartedAt != nil && round.CompletedAt != nil && round.CompletedAt.After(*round.StartedAt) {
+		summary.DurationSeconds = int64(round.CompletedAt.Sub(*round.StartedAt).Seconds())
+	}
+	return summary
+}
+
+func totalRoundsForProfile(profile string) int {
+	if promptProfile, ok := domain.Profiles[profile]; ok && promptProfile.MaxRounds > 0 {
+		return promptProfile.MaxRounds
+	}
+	return 1
+}
+
+func maxActivityTime(current time.Time, candidate time.Time) time.Time {
+	if current.IsZero() || candidate.After(current) {
+		return candidate
+	}
+	return current
 }
 
 func normalizeManifest(manifest *domain.Manifest) {

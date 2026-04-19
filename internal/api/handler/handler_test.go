@@ -20,24 +20,42 @@ import (
 )
 
 type fakeSessionRepository struct {
-	session *domain.Session
+	session    *domain.Session
+	sessions   []domain.Session
+	total      int
+	lastFilter domain.SessionListFilter
 }
 
 func (r *fakeSessionRepository) Create(context.Context, *domain.Session) error {
 	return nil
 }
 
-func (r *fakeSessionRepository) Get(context.Context, uuid.UUID) (*domain.Session, error) {
-	if r.session != nil {
+func (r *fakeSessionRepository) Get(_ context.Context, sessionID uuid.UUID) (*domain.Session, error) {
+	if r.session != nil && r.session.ID == sessionID {
 		copySession := *r.session
 		copySession.Rounds = append([]domain.Round(nil), r.session.Rounds...)
+		return &copySession, nil
+	}
+	for index := range r.sessions {
+		session := r.sessions[index]
+		if session.ID != sessionID {
+			continue
+		}
+		copySession := session
+		copySession.Rounds = append([]domain.Round(nil), session.Rounds...)
 		return &copySession, nil
 	}
 	return nil, ipostgres.ErrNotFound
 }
 
-func (r *fakeSessionRepository) List(context.Context, domain.SessionListFilter) ([]domain.Session, int, error) {
-	return nil, 0, nil
+func (r *fakeSessionRepository) List(_ context.Context, filter domain.SessionListFilter) ([]domain.Session, int, error) {
+	r.lastFilter = filter
+	items := append([]domain.Session(nil), r.sessions...)
+	total := r.total
+	if total == 0 {
+		total = len(items)
+	}
+	return items, total, nil
 }
 
 func (r *fakeSessionRepository) Delete(context.Context, uuid.UUID) error {
@@ -108,8 +126,10 @@ func (e *fakeExporter) Export(_ context.Context, text string, _ domain.DocumentF
 }
 
 type fakeStateRepository struct {
-	progress *domain.SessionProgressSnapshot
-	timeline []domain.SessionTimelineEntry
+	progress           *domain.SessionProgressSnapshot
+	progressBySession  map[uuid.UUID]*domain.SessionProgressSnapshot
+	timeline           []domain.SessionTimelineEntry
+	timelinesBySession map[uuid.UUID][]domain.SessionTimelineEntry
 }
 
 func (r *fakeStateRepository) UpsertProgress(_ context.Context, snapshot *domain.SessionProgressSnapshot) error {
@@ -121,15 +141,36 @@ func (r *fakeStateRepository) UpsertProgress(_ context.Context, snapshot *domain
 		copySnapshot.UpdatedAt = time.Now().UTC()
 	}
 	r.progress = &copySnapshot
+	if r.progressBySession == nil {
+		r.progressBySession = map[uuid.UUID]*domain.SessionProgressSnapshot{}
+	}
+	snapshotCopy := copySnapshot
+	r.progressBySession[copySnapshot.SessionID] = &snapshotCopy
 	return nil
 }
 
-func (r *fakeStateRepository) GetProgress(context.Context, uuid.UUID) (*domain.SessionProgressSnapshot, error) {
+func (r *fakeStateRepository) GetProgress(_ context.Context, sessionID uuid.UUID) (*domain.SessionProgressSnapshot, error) {
+	if r.progressBySession != nil {
+		if snapshot, ok := r.progressBySession[sessionID]; ok {
+			copySnapshot := *snapshot
+			return &copySnapshot, nil
+		}
+	}
 	if r.progress == nil {
 		return nil, ipostgres.ErrNotFound
 	}
 	copySnapshot := *r.progress
 	return &copySnapshot, nil
+}
+
+func (r *fakeStateRepository) ListProgressBySessionIDs(_ context.Context, sessionIDs []uuid.UUID) (map[uuid.UUID]*domain.SessionProgressSnapshot, error) {
+	items := make(map[uuid.UUID]*domain.SessionProgressSnapshot, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		if snapshot, err := r.GetProgress(context.Background(), sessionID); err == nil {
+			items[sessionID] = snapshot
+		}
+	}
+	return items, nil
 }
 
 func (r *fakeStateRepository) AppendTimeline(_ context.Context, entry *domain.SessionTimelineEntry) error {
@@ -144,16 +185,48 @@ func (r *fakeStateRepository) AppendTimeline(_ context.Context, entry *domain.Se
 		copyEntry.Timestamp = time.Now().UnixMilli()
 	}
 	r.timeline = append([]domain.SessionTimelineEntry{copyEntry}, r.timeline...)
+	if r.timelinesBySession == nil {
+		r.timelinesBySession = map[uuid.UUID][]domain.SessionTimelineEntry{}
+	}
+	r.timelinesBySession[copyEntry.SessionID] = append([]domain.SessionTimelineEntry{copyEntry}, r.timelinesBySession[copyEntry.SessionID]...)
 	return nil
 }
 
-func (r *fakeStateRepository) ListTimeline(context.Context, uuid.UUID, int) ([]domain.SessionTimelineEntry, error) {
-	return append([]domain.SessionTimelineEntry(nil), r.timeline...), nil
+func (r *fakeStateRepository) ListTimeline(_ context.Context, sessionID uuid.UUID, limit int, ascending bool) ([]domain.SessionTimelineEntry, error) {
+	entries := append([]domain.SessionTimelineEntry(nil), r.timeline...)
+	if r.timelinesBySession != nil {
+		entries = append([]domain.SessionTimelineEntry(nil), r.timelinesBySession[sessionID]...)
+	}
+	if ascending {
+		for left, right := 0, len(entries)-1; left < right; left, right = left+1, right-1 {
+			entries[left], entries[right] = entries[right], entries[left]
+		}
+	}
+	if limit > 0 && len(entries) > limit {
+		entries = entries[:limit]
+	}
+	return entries, nil
 }
 
-func (r *fakeStateRepository) DeleteForSession(_ context.Context, _ uuid.UUID) error {
-	r.progress = nil
-	r.timeline = nil
+func (r *fakeStateRepository) DeleteForSession(_ context.Context, sessionID uuid.UUID) error {
+	if r.progress != nil && r.progress.SessionID == sessionID {
+		r.progress = nil
+	}
+	if r.progressBySession != nil {
+		delete(r.progressBySession, sessionID)
+	}
+	if len(r.timeline) > 0 {
+		filtered := r.timeline[:0]
+		for _, entry := range r.timeline {
+			if entry.SessionID != sessionID {
+				filtered = append(filtered, entry)
+			}
+		}
+		r.timeline = filtered
+	}
+	if r.timelinesBySession != nil {
+		delete(r.timelinesBySession, sessionID)
+	}
 	return nil
 }
 
@@ -391,6 +464,154 @@ func TestGetSessionStateReturnsPersistedState(t *testing.T) {
 	}
 }
 
+func TestListSessionsSearchAndSort(t *testing.T) {
+	t.Parallel()
+
+	sessionID := uuid.New()
+	repo := &fakeSessionRepository{
+		sessions: []domain.Session{
+			{
+				ID:            sessionID,
+				DocumentID:    uuid.New(),
+				DocumentName:  "demo.txt",
+				DocID:         uuid.NewString(),
+				OriginPath:    "/tmp/demo.txt",
+				FileFormat:    domain.FormatTXT,
+				FileSizeBytes: 10,
+				PromptProfile: "cn",
+				Status:        domain.SessionPending,
+				CreatedAt:     time.Now().UTC(),
+				UpdatedAt:     time.Now().UTC(),
+			},
+		},
+		total: 1,
+	}
+	stateRepo := &fakeStateRepository{
+		progressBySession: map[uuid.UUID]*domain.SessionProgressSnapshot{
+			sessionID: {
+				SessionID:    sessionID,
+				Round:        1,
+				Phase:        "chunk-complete",
+				ProviderUsed: "gpt-4.1-mini",
+				UpdatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+
+	router := newListHandlerRouter(t, repo, stateRepo)
+	req := httptest.NewRequest(http.MethodGet, "/sessions?page=1&size=500&status=pending&q=%20demo%20&sort=updated_at", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	if repo.lastFilter.Page != 1 || repo.lastFilter.Size != 100 || repo.lastFilter.Status != domain.SessionPending {
+		t.Fatalf("filter mismatch: %+v", repo.lastFilter)
+	}
+	if repo.lastFilter.Query != "demo" || repo.lastFilter.Sort != "updated_at" {
+		t.Fatalf("search/sort mismatch: %+v", repo.lastFilter)
+	}
+
+	var resp struct {
+		Items []struct {
+			Session struct {
+				ID string `json:"id"`
+			} `json:"session"`
+			Progress *struct {
+				ProviderUsed string `json:"providerUsed"`
+			} `json:"progress"`
+			Metrics struct {
+				TotalRounds int `json:"totalRounds"`
+			} `json:"metrics"`
+		} `json:"items"`
+		Size int `json:"size"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Size != 100 {
+		t.Fatalf("size mismatch: %d", resp.Size)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].Session.ID != sessionID.String() {
+		t.Fatalf("items mismatch: %+v", resp.Items)
+	}
+	if resp.Items[0].Progress == nil || resp.Items[0].Progress.ProviderUsed != "gpt-4.1-mini" {
+		t.Fatalf("progress mismatch: %+v", resp.Items[0].Progress)
+	}
+	if resp.Items[0].Metrics.TotalRounds != 2 {
+		t.Fatalf("metrics mismatch: %+v", resp.Items[0].Metrics)
+	}
+}
+
+func TestGetSessionHistory(t *testing.T) {
+	t.Parallel()
+
+	router, sessionID, _, _, stateRepo := newHandlerHarness(t, &domain.Manifest{
+		RoundID: uuid.New(),
+		Chunks: []domain.Chunk{
+			{ID: "p0_c0", Status: domain.ChunkPassed},
+			{ID: "p1_c0", Status: domain.ChunkRecovered},
+			{ID: "p2_c0", Status: domain.ChunkFailed},
+		},
+	})
+	stateRepo.progress = &domain.SessionProgressSnapshot{
+		SessionID:       sessionID,
+		Round:           1,
+		Phase:           "complete",
+		CompletedChunks: 3,
+		TotalChunks:     3,
+		Percent:         100,
+		ProviderUsed:    "gpt-4.1-mini",
+		UpdatedAt:       time.Now().UTC(),
+	}
+	stateRepo.timeline = []domain.SessionTimelineEntry{
+		{ID: "2", SessionID: sessionID, Round: 1, Title: "第 1 轮完成", Timestamp: 200},
+		{ID: "1", SessionID: sessionID, Round: 1, Title: "文档已提交", Timestamp: 100},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions/"+sessionID.String()+"/history", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+
+	var resp struct {
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
+		Rounds []struct {
+			Summary struct {
+				ChunkCount      int `json:"chunkCount"`
+				PassedChunks    int `json:"passedChunks"`
+				RecoveredChunks int `json:"recoveredChunks"`
+				FailedChunks    int `json:"failedChunks"`
+			} `json:"summary"`
+		} `json:"rounds"`
+		Timeline []struct {
+			Round int    `json:"round"`
+			Title string `json:"title"`
+		} `json:"timeline"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Session.ID != sessionID.String() {
+		t.Fatalf("session mismatch: %s", resp.Session.ID)
+	}
+	if len(resp.Rounds) != 1 {
+		t.Fatalf("round count mismatch: %d", len(resp.Rounds))
+	}
+	if got := resp.Rounds[0].Summary; got.ChunkCount != 3 || got.PassedChunks != 1 || got.RecoveredChunks != 1 || got.FailedChunks != 1 {
+		t.Fatalf("summary mismatch: %+v", got)
+	}
+	if len(resp.Timeline) != 2 || resp.Timeline[0].Title != "文档已提交" || resp.Timeline[0].Round != 1 {
+		t.Fatalf("timeline mismatch: %+v", resp.Timeline)
+	}
+}
+
 func TestExportPassesSelectionToService(t *testing.T) {
 	t.Parallel()
 
@@ -508,7 +729,9 @@ func newHandlerHarness(t *testing.T, manifest *domain.Manifest) (*gin.Engine, uu
 
 	h := New(svc, nil, fakeHealth{})
 	router := gin.New()
+	router.GET("/sessions", h.ListSessions)
 	router.GET("/sessions/:id/state", h.GetSessionState)
+	router.GET("/sessions/:id/history", h.GetSessionHistory)
 	router.GET("/sessions/:id/cards", h.ListCards)
 	router.POST("/sessions/:id/cards/apply-all", h.ApplyAllCards)
 	router.POST("/sessions/:id/cards/:cardId/accept", h.AcceptCard)
@@ -516,6 +739,30 @@ func newHandlerHarness(t *testing.T, manifest *domain.Manifest) (*gin.Engine, uu
 	router.GET("/sessions/:id/export", h.Export)
 
 	return router, sessionID, manifestRepo, exporter, stateRepo
+}
+
+func newListHandlerRouter(t *testing.T, sessionRepo *fakeSessionRepository, stateRepo *fakeStateRepository) *gin.Engine {
+	t.Helper()
+
+	svc := service.NewService(
+		sessionRepo,
+		&fakeRoundRepository{},
+		&fakeManifestRepository{},
+		nil,
+		stateRepo,
+		nil,
+		nil,
+		nil,
+		&fakeExporter{},
+		storage.NewLayout(t.TempDir()),
+		nil,
+		nil,
+	)
+
+	h := New(svc, nil, fakeHealth{})
+	router := gin.New()
+	router.GET("/sessions", h.ListSessions)
+	return router
 }
 
 func cloneManifest(manifest *domain.Manifest) *domain.Manifest {

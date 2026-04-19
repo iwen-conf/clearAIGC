@@ -92,3 +92,52 @@ export function formatBytes(bytes: number): string {
   if (kb < 1024) return `${kb.toFixed(1)} KB`
   return `${(kb / 1024).toFixed(2)} MB`
 }
+
+export function formatRelativeTime(value: string | undefined | null): string {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  const ms = parsed.getTime()
+  if (!Number.isFinite(ms)) return '—'
+
+  const diff = Date.now() - ms
+  const minute = 60_000
+  const hour = 60 * minute
+  const day = 24 * hour
+  const week = 7 * day
+
+  if (diff < 30_000 && diff > -30_000) return '刚刚'
+  if (diff >= 0) {
+    if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`
+    if (diff < day) return `${Math.floor(diff / hour)} 小时前`
+    if (diff < week) return `${Math.floor(diff / day)} 天前`
+  } else {
+    const ahead = -diff
+    if (ahead < hour) return `${Math.floor(ahead / minute)} 分钟后`
+    if (ahead < day) return `${Math.floor(ahead / hour)} 小时后`
+  }
+  return formatDate(value)
+}
+
+export function formatDuration(seconds: number | undefined | null): string {
+  if (!seconds || seconds <= 0) return '—'
+  if (seconds < 60) return `${Math.round(seconds)} 秒`
+  const minutes = Math.floor(seconds / 60)
+  const remainder = Math.round(seconds % 60)
+  if (minutes < 60) return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes ? `${hours} 小时 ${remainingMinutes} 分` : `${hours} 小时`
+}
+
+export function promptProfileLabel(profile: string | undefined): string {
+  switch (profile) {
+    case 'cn':
+      return '中文(双轮)润色'
+    case 'cn_single':
+      return '中文(单轮)润色'
+    case 'en':
+      return '英文润色'
+    default:
+      return profile ?? '—'
+  }
+}

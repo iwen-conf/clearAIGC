@@ -11,8 +11,101 @@
 | `POST` | `/sessions` | 上传文档，创建会话 | `multipart/form-data: file, promptProfile` | `{id, docId, status, promptProfile}` |
 | `POST` | `/sessions/batch` | 批量上传多文档 | `multipart/form-data: files[], promptProfile` | `{sessions[{id, docId, status}]}` |
 | `GET` | `/sessions/{id}` | 获取会话详情 | — | `{id, docId, status, rounds[], createdAt}` |
+| `GET` | `/sessions/{id}/history` | 获取历史详情聚合 | — | `{session, progress, metrics, rounds[], timeline[]}` |
 | `DELETE` | `/sessions/{id}` | 删除会话及所有关联数据 | — | `204` |
-| `GET` | `/sessions` | 分页查询会话列表 | `?page=1&size=20&status=completed` | `{items[], total, page, size}` |
+| `GET` | `/sessions` | 分页查询会话列表 | `?page=1&size=20&status=completed&q=demo&sort=-created_at` | `{items[], total, page, size}` |
+
+**列表响应**：
+
+```json
+{
+  "items": [
+    {
+      "session": {
+        "id": "uuid",
+        "documentName": "demo.txt",
+        "promptProfile": "cn",
+        "status": "completed",
+        "rounds": [
+          {
+            "id": "uuid",
+            "number": 1,
+            "providerUsed": "gpt-4.1-mini",
+            "totalTokens": 1834,
+            "status": "completed"
+          }
+        ]
+      },
+      "progress": {
+        "sessionId": "uuid",
+        "round": 1,
+        "phase": "complete",
+        "completedChunks": 6,
+        "totalChunks": 6,
+        "percent": 100,
+        "providerUsed": "gpt-4.1-mini",
+        "updatedAt": "2026-04-19T10:02:30Z"
+      },
+      "metrics": {
+        "completedRounds": 1,
+        "totalRounds": 2,
+        "totalTokens": 1834,
+        "lastActivityAt": "2026-04-19T10:02:34Z"
+      }
+    }
+  ],
+  "total": 42,
+  "page": 1,
+  "size": 20
+}
+```
+
+**历史详情响应**：
+
+```json
+{
+  "session": { "id": "uuid", "documentName": "demo.txt", "rounds": [] },
+  "progress": {
+    "sessionId": "uuid",
+    "round": 1,
+    "phase": "complete",
+    "completedChunks": 6,
+    "totalChunks": 6,
+    "percent": 100,
+    "providerUsed": "gpt-4.1-mini",
+    "updatedAt": "2026-04-19T10:02:30Z"
+  },
+  "metrics": {
+    "completedRounds": 1,
+    "totalRounds": 2,
+    "totalTokens": 1834,
+    "lastActivityAt": "2026-04-19T10:02:34Z"
+  },
+  "rounds": [
+    {
+      "round": { "id": "uuid", "number": 1, "status": "completed" },
+      "summary": {
+        "chunkCount": 6,
+        "passedChunks": 5,
+        "recoveredChunks": 1,
+        "failedChunks": 0,
+        "scoreTotal": 68,
+        "durationSeconds": 145
+      }
+    }
+  ],
+  "timeline": [
+    {
+      "id": "1042",
+      "round": 1,
+      "tone": "success",
+      "title": "第 1 轮完成",
+      "detail": "6/6 片段就绪 · 消耗 1834 tokens",
+      "timestamp": 1745049754000
+    }
+  ]
+}
+```
 
 ### 1.2 Round 控制
 

@@ -12,7 +12,7 @@ Naturalize 是一个面向中英文学术论文、技术文档和课程作业的
 
 | 模式 | 轮次 | 策略 | 度量 |
 | :--- | :--- | :--- | :--- |
-| 中文 | 固定 2 轮 | R1: 词汇降维 + 句式扩展 → R2: AI 套话清除 + 节奏重构 | 字符 |
+| 中文 | 双轮/单轮 | 包含回退机制的 R1: 词汇降维 + 句式扩展 → R2: AI 套话清除 + 节奏重构 | 字符 |
 | 英文 | 单轮 | 模板打破 + 自然粗糙度注入 + 学术语域保持 | 单词 |
 
 ### 智能分块引擎
@@ -172,7 +172,7 @@ type Checker interface {
 
 | 规则 | 说明 |
 | :--- | :--- |
-| Prompt Profile 映射 | cn: 2 轮 (char 度量), en: 1 轮 (word 度量) |
+| Prompt Profile 映射 | cn: 2 轮 (char 度量), cn_single: 1 轮 (char 度量), en: 1 轮 (word 度量) |
 | 轮次顺序不可逆 | Round 1 → Round 2，不可跳过、合并或反转 |
 | 输出契约注入 | 每个 chunk prompt 必须附加 `[OUTPUT CONTRACT]` 文本块 |
 | Prompt 格式 | `[ROUND N]\n[CHUNK id]\n\n{prompt}\n\n{contract}\n\n[INPUT TEXT]\n{text}` |

@@ -52,6 +52,7 @@ export interface UseSessionResult {
   acceptCard: (cardId: string) => Promise<void>
   rejectCard: (cardId: string) => Promise<void>
   applyAll: () => Promise<void>
+  adopt: (sessionId: string) => Promise<void>
   clearNotice: () => void
 }
 
@@ -321,6 +322,23 @@ export function useSession(): UseSessionResult {
     setError(null)
   }, [])
 
+  const adopt = useCallback(async (sessionId: string) => {
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      window.localStorage.setItem(STORAGE_KEY, sessionId)
+      await refreshRef.current(sessionId)
+      setMessage('已加载历史会话，可继续处理。')
+    } catch (err) {
+      window.localStorage.removeItem(STORAGE_KEY)
+      setError(toErrorMessage(err))
+      throw err
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
   const mutateCardState = useCallback(
     async (cardId: string, next: 'accepted' | 'rejected') => {
       if (!session || latestCompletedRoundNumber == null) return
@@ -402,6 +420,7 @@ export function useSession(): UseSessionResult {
     acceptCard,
     rejectCard,
     applyAll,
+    adopt,
     clearNotice,
   }
 }

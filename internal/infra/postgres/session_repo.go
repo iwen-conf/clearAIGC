@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -86,23 +87,33 @@ func (r *SessionRepository) List(ctx context.Context, filter domain.SessionListF
 		size = 100
 	}
 
-	statusClause := ""
+	whereClauses := make([]string, 0, 2)
 	args := []any{}
 	if filter.Status != "" {
-		statusClause = " WHERE status = $1"
+		whereClauses = append(whereClauses, fmt.Sprintf("status = $%d", len(args)+1))
 		args = append(args, filter.Status)
+	}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("document_name ILIKE '%%' || $%d || '%%'", len(args)+1))
+		args = append(args, query)
+	}
+
+	whereClause := ""
+	if len(whereClauses) > 0 {
+		whereClause = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM sessions`+statusClause, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM sessions`+whereClause, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
+	orderBy := sessionListOrderBy(filter.Sort)
 	args = append(args, size, (page-1)*size)
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, document_id, document_name, doc_id, origin_path, file_format, file_size_bytes, prompt_profile, status, created_at, updated_at
-		FROM sessions`+statusClause+`
-		ORDER BY created_at DESC
+		FROM sessions`+whereClause+`
+		ORDER BY `+orderBy+`
 		LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)),
 		args...,
 	)
@@ -129,10 +140,28 @@ func (r *SessionRepository) List(ctx context.Context, filter domain.SessionListF
 		); err != nil {
 			return nil, 0, err
 		}
+		rounds, err := listRounds(ctx, r.pool, session.ID)
+		if err != nil {
+			return nil, 0, err
+		}
+		session.Rounds = rounds
 		sessions = append(sessions, session)
 	}
 
 	return sessions, total, rows.Err()
+}
+
+func sessionListOrderBy(sort string) string {
+	switch sort {
+	case "created_at":
+		return "created_at ASC"
+	case "-updated_at":
+		return "updated_at DESC"
+	case "updated_at":
+		return "updated_at ASC"
+	default:
+		return "created_at DESC"
+	}
 }
 
 func (r *SessionRepository) Delete(ctx context.Context, sessionID uuid.UUID) error {
