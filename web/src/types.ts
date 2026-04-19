@@ -70,6 +70,8 @@ export interface ChunkComparison {
   status: ChunkStatus
   charDelta: number
   aiRate: number
+  outputAiRate: number
+  detector: string
   state: ChunkReviewState
   checks: CheckResult[]
 }
@@ -77,6 +79,14 @@ export interface ChunkComparison {
 export interface RoundDiffResponse {
   round: number
   chunks: ChunkComparison[]
+}
+
+export interface SessionStateResponse {
+  session: Session
+  preview: OutputResponse | null
+  comparison: RoundDiffResponse | null
+  progress: ProgressPayload | null
+  timeline: TimelineEntry[]
 }
 
 export interface ProgressPayload {

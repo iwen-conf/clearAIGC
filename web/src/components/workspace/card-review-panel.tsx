@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import {
   Button,
   Card,
@@ -21,11 +21,18 @@ type NormalizedChunkComparison = ChunkComparison & {
   state: ChunkReviewState
   status: ChunkStatus
   aiRate: number
+  outputAiRate: number
+  detector: string
 }
 
 interface HighlightSegment {
   text: string
   changed: boolean
+}
+
+interface HighlightDiff {
+  original: HighlightSegment[]
+  rewritten: HighlightSegment[]
 }
 
 interface CardReviewPanelProps {
@@ -83,7 +90,49 @@ function normalizeChunk(chunk: ChunkComparison): NormalizedChunkComparison {
     state: normalizeChunkState(chunk.state),
     status: normalizeChunkStatus(chunk.status),
     aiRate: normalizeAiRate(chunk.aiRate),
+    outputAiRate: normalizeAiRate(chunk.outputAiRate),
+    detector: chunk.detector?.trim() || '启发式规则',
   }
+}
+
+const chineseDigits = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'] as const
+const chineseUnits = ['', '十', '百', '千'] as const
+
+function toChineseNumber(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '零'
+  }
+
+  const numbers = String(Math.trunc(value))
+    .split('')
+    .map((digit) => Number(digit))
+
+  let result = ''
+  let pendingZero = false
+
+  numbers.forEach((digit, index) => {
+    const unitIndex = numbers.length - index - 1
+    if (digit === 0) {
+      pendingZero = result !== ''
+      return
+    }
+
+    if (pendingZero) {
+      result += chineseDigits[0]
+      pendingZero = false
+    }
+
+    if (!(digit === 1 && unitIndex === 1 && result === '')) {
+      result += chineseDigits[digit]
+    }
+    result += chineseUnits[unitIndex] ?? ''
+  })
+
+  return result
+}
+
+function formatParagraphLabel(paragraphIndex: number): string {
+  return `第${toChineseNumber(paragraphIndex)}段`
 }
 
 function normalizeComparableText(text: string): string {
@@ -94,12 +143,9 @@ function hasVisibleRewriteChange(chunk: ChunkComparison): boolean {
   return normalizeComparableText(chunk.input) !== normalizeComparableText(chunk.output)
 }
 
-function buildRewriteHighlightSegments(input: string, output: string): HighlightSegment[] {
+function buildHighlightDiff(input: string, output: string): HighlightDiff {
   const source = Array.from(normalizeComparableText(input))
   const target = Array.from(normalizeComparableText(output))
-  if (target.length === 0) {
-    return []
-  }
 
   const dp = Array.from({ length: source.length + 1 }, () => new Uint16Array(target.length + 1))
   for (let sourceIndex = source.length - 1; sourceIndex >= 0; sourceIndex -= 1) {
@@ -111,11 +157,12 @@ function buildRewriteHighlightSegments(input: string, output: string): Highlight
     }
   }
 
-  const segments: HighlightSegment[] = []
+  const original: HighlightSegment[] = []
+  const rewritten: HighlightSegment[] = []
   let sourceIndex = 0
   let targetIndex = 0
 
-  const pushSegment = (text: string, changed: boolean) => {
+  const pushSegment = (segments: HighlightSegment[], text: string, changed: boolean) => {
     if (!text) return
     const previous = segments.at(-1)
     if (previous && previous.changed === changed) {
@@ -127,7 +174,8 @@ function buildRewriteHighlightSegments(input: string, output: string): Highlight
 
   while (targetIndex < target.length) {
     if (sourceIndex < source.length && source[sourceIndex] === target[targetIndex]) {
-      pushSegment(target[targetIndex], false)
+      pushSegment(original, source[sourceIndex], false)
+      pushSegment(rewritten, target[targetIndex], false)
       sourceIndex += 1
       targetIndex += 1
       continue
@@ -137,15 +185,44 @@ function buildRewriteHighlightSegments(input: string, output: string): Highlight
       targetIndex + 1 <= target.length &&
       (sourceIndex === source.length || dp[sourceIndex][targetIndex + 1] >= dp[sourceIndex + 1][targetIndex])
     ) {
-      pushSegment(target[targetIndex], true)
+      pushSegment(rewritten, target[targetIndex], true)
       targetIndex += 1
       continue
     }
 
+    if (sourceIndex < source.length) {
+      pushSegment(original, source[sourceIndex], true)
+    }
     sourceIndex += 1
   }
 
-  return segments
+  while (sourceIndex < source.length) {
+    pushSegment(original, source[sourceIndex], true)
+    sourceIndex += 1
+  }
+
+  return { original, rewritten }
+}
+
+function renderHighlightSegments(
+  keyPrefix: string,
+  segments: HighlightSegment[],
+  changedStyle: CSSProperties,
+  emptyText = '—',
+) {
+  if (segments.length === 0) {
+    return emptyText
+  }
+
+  return segments.map((segment, index) =>
+    segment.changed ? (
+      <mark key={`${keyPrefix}-segment-${index}`} style={changedStyle}>
+        {segment.text}
+      </mark>
+    ) : (
+      <span key={`${keyPrefix}-segment-${index}`}>{segment.text}</span>
+    ),
+  )
 }
 
 export function CardReviewPanel(props: CardReviewPanelProps) {
@@ -280,8 +357,9 @@ interface ReviewCardProps {
 function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
   const state = stateMeta[chunk.state]
   const status = statusMeta[chunk.status]
-  const rateColor = aiRateColor(chunk.aiRate)
-  const rewriteSegments = buildRewriteHighlightSegments(chunk.input, chunk.output)
+  const originalRateColor = aiRateColor(chunk.aiRate)
+  const outputRateColor = aiRateColor(chunk.outputAiRate)
+  const highlightDiff = buildHighlightDiff(chunk.input, chunk.output)
 
   return (
     <Card
@@ -292,17 +370,27 @@ function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
         borderColor: chunk.state === 'accepted' ? '#b7eb8f' : undefined,
       }}
       title={
-        <Space size={12} wrap>
-          <Text strong>
-            片段 {chunk.chunkIndex + 1} · 第 {chunk.paragraphIndex + 1} 段
-          </Text>
-          <Tag color={rateColor}>AI率 {aiRatePercent(chunk.aiRate)}</Tag>
-          <Tag color={status.color}>{status.label}</Tag>
-          <Tag color={state.color}>{state.label}</Tag>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {formatCharDelta(chunk.charDelta)}
-          </Text>
-        </Space>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <Space size={12} wrap>
+            <Text strong>
+              片段 {chunk.chunkIndex + 1} · {formatParagraphLabel(chunk.paragraphIndex + 1)}
+            </Text>
+            <Text type="secondary">检测Agent：{chunk.detector}</Text>
+          </Space>
+          <Space size={8} wrap>
+            <Text type="secondary">原文：</Text>
+            <Tag color={originalRateColor}>AI率 {aiRatePercent(chunk.aiRate)}</Tag>
+          </Space>
+          <Space size={8} wrap>
+            <Text type="secondary">润色后：</Text>
+            <Tag color={outputRateColor}>AI率 {aiRatePercent(chunk.outputAiRate)}</Tag>
+            <Tag color={status.color}>{status.label}</Tag>
+            <Tag color={state.color}>{state.label}</Tag>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {formatCharDelta(chunk.charDelta)}
+            </Text>
+          </Space>
+        </div>
       }
       extra={
         <Space size={8}>
@@ -325,6 +413,14 @@ function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
         </Space>
       }
     >
+      <Space size={8} wrap style={{ marginBottom: 12 }}>
+        <Tag bordered={false} color="error">
+          原文改动处
+        </Tag>
+        <Tag bordered={false} color="success">
+          润色替换处
+        </Tag>
+      </Space>
       <Row gutter={16}>
         <Col xs={24} md={12}>
           <div
@@ -339,7 +435,12 @@ function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
               原文
             </Text>
             <Paragraph style={{ marginTop: 4, marginBottom: 0, whiteSpace: 'pre-wrap' }}>
-              {chunk.input}
+              {renderHighlightSegments(`${chunk.id}-original`, highlightDiff.original, {
+                background: '#ffd6bf',
+                color: '#871400',
+                padding: 0,
+                borderRadius: 2,
+              })}
             </Paragraph>
           </div>
         </Col>
@@ -356,24 +457,12 @@ function ReviewCard({ chunk, busy, onAccept, onReject }: ReviewCardProps) {
               润色后
             </Text>
             <Paragraph style={{ marginTop: 4, marginBottom: 0, whiteSpace: 'pre-wrap' }}>
-              {chunk.output
-                ? rewriteSegments.map((segment, index) =>
-                    segment.changed ? (
-                      <mark
-                        key={`${chunk.id}-segment-${index}`}
-                        style={{
-                          background: '#ffe58f',
-                          padding: 0,
-                          borderRadius: 2,
-                        }}
-                      >
-                        {segment.text}
-                      </mark>
-                    ) : (
-                      <span key={`${chunk.id}-segment-${index}`}>{segment.text}</span>
-                    ),
-                  )
-                : '—'}
+              {renderHighlightSegments(`${chunk.id}-rewrite`, highlightDiff.rewritten, {
+                background: '#d9f7be',
+                color: '#135200',
+                padding: 0,
+                borderRadius: 2,
+              })}
             </Paragraph>
           </div>
         </Col>

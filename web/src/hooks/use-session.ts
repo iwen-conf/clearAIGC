@@ -4,9 +4,7 @@ import {
   applyAllCards as apiApplyAllCards,
   createSession,
   deleteSession,
-  getDiff,
-  getOutput,
-  getSession,
+  getSessionState,
   pauseRound,
   rejectCard as apiRejectCard,
   resumeRound,
@@ -23,6 +21,7 @@ import type {
   RecoveryPayload,
   RoundDiffResponse,
   Session,
+  SessionStateResponse,
   TimelineEntry,
 } from '@/types'
 import { toErrorMessage } from '@/lib/format'
@@ -99,28 +98,22 @@ export function useSession(): UseSessionResult {
     [],
   )
 
-  const refreshSession = useCallback(async (sessionId: string) => {
-    const next = await getSession(sessionId)
-    setSession(next)
+  const applySessionState = useCallback((state: SessionStateResponse) => {
+    setSession(state.session)
+    setPreview(state.preview)
+    setComparison(state.comparison)
+    setProgress(state.progress)
+    setTimeline(state.timeline ?? [])
     setError(null)
-
-    const round = next.rounds
-      .filter((item) => item.status === 'completed')
-      .sort((a, b) => a.number - b.number)
-      .at(-1)
-
-    if (round) {
-      const [nextPreview, nextComparison] = await Promise.all([
-        getOutput(sessionId, round.number),
-        getDiff(sessionId, round.number).catch(() => null),
-      ])
-      setPreview(nextPreview)
-      setComparison(nextComparison)
-    } else {
-      setPreview(null)
-      setComparison(null)
-    }
   }, [])
+
+  const refreshSession = useCallback(
+    async (sessionId: string) => {
+      const next = await getSessionState(sessionId)
+      applySessionState(next)
+    },
+    [applySessionState],
+  )
 
   const refreshRef = useRef(refreshSession)
   refreshRef.current = refreshSession
@@ -239,18 +232,13 @@ export function useSession(): UseSessionResult {
         await refreshRef.current(created.id)
         await startRound(created.id)
         await refreshRef.current(created.id)
-        pushTimeline({
-          tone: 'neutral',
-          title: '文档已提交',
-          detail: '第一轮润色已开始。',
-        })
       } catch (err) {
         setError(toErrorMessage(err))
       } finally {
         setBusy(false)
       }
     },
-    [pushTimeline],
+    [],
   )
 
   const resume = useCallback(async () => {

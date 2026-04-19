@@ -7,6 +7,7 @@ import type {
   Round,
   RoundDiffResponse,
   Session,
+  SessionStateResponse,
   SessionSummary,
 } from './types'
 
@@ -50,6 +51,10 @@ export async function createSession(file: File, promptProfile: PromptProfile): P
 
 export async function getSession(sessionId: string): Promise<Session> {
   return request<Session>(`/api/v1/sessions/${sessionId}`)
+}
+
+export async function getSessionState(sessionId: string): Promise<SessionStateResponse> {
+  return request<SessionStateResponse>(`/api/v1/sessions/${sessionId}/state`)
 }
 
 export async function startRound(sessionId: string): Promise<{ roundId: string; roundNumber: number; status: string }> {
