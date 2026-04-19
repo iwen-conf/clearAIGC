@@ -62,3 +62,21 @@ Review notes:
 - Fix: keep `VITE_API_PROXY_TARGET` as the override, otherwise probe `127.0.0.1:18081` before `127.0.0.1:8080` and log the selected target at Vite startup.
 - Verification: `npm run build` now reports `[vite] proxying /api to http://127.0.0.1:18081`, and `curl http://127.0.0.1:5176/api/v1/agents` returns the backend JSON through the Vite proxy.
 - Residual risk: `npm run lint` still fails on pre-existing React hook issues in `web/src/hooks/use-agents.ts` and `web/src/hooks/use-session.ts`; this incident fix does not change those files.
+
+## Mock Rewrite Incident 2026-04-19
+
+- [x] Reproduce the no-op rewrite with `testdata/needs_polish_demo.txt` and confirm round 1 diff shows `changedCount=0`
+- [x] Identify the concrete root cause in `deploy/mock-openai/server.mjs`
+- [x] Replace the Chinese mock rewrite path with deterministic round-aware transformations for round 1 and round 2
+- [x] Expose local debug evidence from the mock rewrite path
+- [x] Route the project backend to the repository-local mock service instead of the unrelated `clearAIGC` mock container
+- [x] Restart managed local services and verify health
+- [x] Re-run round 1 + round 2 against the live API and confirm both rounds produce changed chunks and non-trivial AI rates
+- [x] Re-run `go test ./...` and `go vet ./...`
+
+Review notes:
+- Root cause: the project backend was effectively consuming a mock provider that returned Chinese input unchanged, so the workflow completed, spent tokens, and emitted chunk-complete events without producing any meaningful rewrite.
+- Secondary environment issue: the local backend had been pointed at an unrelated `clearAIGC` mock on `127.0.0.1:18787`; fixing only this repository's Docker mock was insufficient until the backend was repointed to a repository-local mock process.
+- Fix: `deploy/mock-openai/server.mjs` now parses `[ROUND n]`, applies deterministic Chinese rewrite heuristics per round, and logs concise input/output debug evidence for each request.
+- Runtime contract: the repository-local mock is now managed in tmux on `127.0.0.1:18788`, and the repository-local backend is managed in tmux on `127.0.0.1:18081` with provider URLs pointing to that mock.
+- Verification: before the fix, round 1 on `needs_polish_demo.txt` returned `changedCount=0`; after the fix, round 1 returned `changedCount=6` with visible rewrites, round 2 returned `changedCount=6` with further refinement, and diff payloads now carry non-trivial `aiRate` values.
