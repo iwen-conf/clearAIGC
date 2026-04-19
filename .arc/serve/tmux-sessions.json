@@ -1,24 +1,8 @@
 {
   "schema_version": "1.0.0",
   "project_root": "/Users/iluwen/Documents/Code/Workspace/Go/AI_Agents/Naturalize",
-  "updated_at": "2026-04-19T03:37:47Z",
+  "updated_at": "2026-04-19T06:56:31Z",
   "sessions": [
-    {
-      "service_name": "frontend",
-      "session_name": "naturalize-frontend",
-      "cwd": "/Users/iluwen/Documents/Code/Workspace/Go/AI_Agents/Naturalize/web",
-      "command": "env VITE_API_PROXY_TARGET=http://127.0.0.1:18081 npm run dev -- --host 127.0.0.1 --port 5175 --strictPort",
-      "ports": [
-        "5175"
-      ],
-      "status": "running",
-      "started_at": "2026-04-19T00:08:11Z",
-      "stopped_at": null,
-      "last_action": "restart",
-      "last_action_at": "2026-04-19T00:08:11Z",
-      "last_checked_at": "2026-04-19T03:37:46Z",
-      "managed_by": "arc:serve"
-    },
     {
       "service_name": "mock-openai",
       "session_name": "arc-naturalize-mock-openai-5aef6fbb",
@@ -32,7 +16,23 @@
       "stopped_at": null,
       "last_action": "restart",
       "last_action_at": "2026-04-19T02:47:34Z",
-      "last_checked_at": "2026-04-19T03:37:46Z",
+      "last_checked_at": "2026-04-19T06:56:30Z",
+      "managed_by": "arc:serve"
+    },
+    {
+      "service_name": "frontend",
+      "session_name": "naturalize-frontend",
+      "cwd": "/Users/iluwen/Documents/Code/Workspace/Go/AI_Agents/Naturalize/web",
+      "command": "env VITE_API_PROXY_TARGET=http://127.0.0.1:18081 npm run dev -- --host 127.0.0.1 --port 5175 --strictPort",
+      "ports": [
+        "5175"
+      ],
+      "status": "running",
+      "started_at": "2026-04-19T06:26:42Z",
+      "stopped_at": null,
+      "last_action": "restart",
+      "last_action_at": "2026-04-19T06:26:42Z",
+      "last_checked_at": "2026-04-19T06:56:30Z",
       "managed_by": "arc:serve"
     },
     {
@@ -44,11 +44,11 @@
         "18081"
       ],
       "status": "running",
-      "started_at": "2026-04-19T03:37:47Z",
+      "started_at": "2026-04-19T06:56:31Z",
       "stopped_at": null,
       "last_action": "restart",
-      "last_action_at": "2026-04-19T03:37:47Z",
-      "last_checked_at": "2026-04-19T03:37:47Z",
+      "last_action_at": "2026-04-19T06:56:31Z",
+      "last_checked_at": "2026-04-19T06:56:31Z",
       "managed_by": "arc:serve"
     }
   ]

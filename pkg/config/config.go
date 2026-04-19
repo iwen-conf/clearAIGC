@@ -207,7 +207,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("http.listen", ":8080")
 	v.SetDefault("http.read_timeout", 30*time.Second)
-	v.SetDefault("http.write_timeout", 30*time.Second)
+	v.SetDefault("http.write_timeout", 0*time.Second)
 	v.SetDefault("http.shutdown_grace", 10*time.Second)
 	v.SetDefault("http.allowed_origins", []string{"*"})
 

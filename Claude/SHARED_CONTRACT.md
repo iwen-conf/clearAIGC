@@ -1,0 +1,1 @@
+../Codex/SHARED_CONTRACT.md

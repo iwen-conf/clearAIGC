@@ -7,6 +7,7 @@ const (
 	CheckDisallowedPattern CheckType = "disallowed_pattern"
 	CheckMarkdownInjection CheckType = "markdown_injection"
 	CheckAbnormalExpansion CheckType = "abnormal_expansion"
+	CheckAIRateElevated    CheckType = "airate_elevated"
 )
 
 type CheckResult struct {

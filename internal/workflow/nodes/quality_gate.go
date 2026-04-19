@@ -25,6 +25,7 @@ func (g *QualityGate) Check(input, output string) domain.QualityReport {
 		g.checkDisallowed(output),
 		g.checkMarkdown(output),
 		g.checkExpansion(input, output),
+		g.checkAIRateElevated(input, output),
 	}
 
 	report := domain.QualityReport{
@@ -118,4 +119,18 @@ func (g *QualityGate) checkExpansion(input, output string) domain.CheckResult {
 		return domain.CheckResult{Type: domain.CheckAbnormalExpansion, Passed: false, Reason: "The rewritten text expanded far beyond the source passage."}
 	}
 	return domain.CheckResult{Type: domain.CheckAbnormalExpansion, Passed: true}
+}
+
+func (g *QualityGate) checkAIRateElevated(input, output string) domain.CheckResult {
+	inRate := domain.EstimateAIRate(input)
+	outRate := domain.EstimateAIRate(output)
+
+	if outRate > inRate || outRate > 0.5 {
+		features := domain.IdentifyAIFeatures(output)
+		if len(features) > 0 {
+			reason := "High AI-likeness score. MUST REMOVE these specific patterns: " + strings.Join(features, ", ")
+			return domain.CheckResult{Type: domain.CheckAIRateElevated, Passed: false, Reason: reason}
+		}
+	}
+	return domain.CheckResult{Type: domain.CheckAIRateElevated, Passed: true}
 }

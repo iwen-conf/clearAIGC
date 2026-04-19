@@ -167,3 +167,46 @@ func hasLongEnumerativeSentence(text string) bool {
 	}
 	return longSentences > 0 && commaHeavySentences > 0
 }
+
+// IdentifyAIFeatures extracts specific substrings and structural patterns that contribute to a high AI rate.
+func IdentifyAIFeatures(text string) []string {
+	text = strings.TrimSpace(normalizeAIRateText(text))
+	if text == "" {
+		return nil
+	}
+
+	var features []string
+
+	for _, pattern := range aiStrongPatterns {
+		if match := pattern.FindString(text); match != "" {
+			features = append(features, match)
+		}
+	}
+
+	lowerText := strings.ToLower(text)
+	for _, phrase := range aiTransitionPhrases {
+		target := text
+		if isASCIIPhrase(phrase) {
+			target = lowerText
+		}
+		if strings.Contains(target, phrase) {
+			features = append(features, phrase)
+		}
+	}
+
+	for _, term := range aiAbstractTerms {
+		if strings.Contains(text, term) {
+			features = append(features, term)
+		}
+	}
+
+	if strings.Contains(text, "更加") {
+		features = append(features, "更加")
+	}
+
+	if hasLongEnumerativeSentence(text) {
+		features = append(features, "句式单一/包含过多逗号的长列举句")
+	}
+
+	return features
+}

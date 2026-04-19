@@ -96,3 +96,57 @@ Review notes:
 - Frontend decision: do not add browser SQLite for this path. The Vite app now restores from backend state and only keeps the active `sessionId` in `localStorage` as a pointer to the recoverable server-side session.
 - Verification: `go test ./...` and `npm run build` passed after `gofmt`; the managed backend was restarted on `127.0.0.1:18081`; a live API run on `testdata/needs_polish_demo.txt` returned early `/state` data with `progress.phase=queued` and `timeline=["文档已提交"]`, then final `/state` data with preview, diff comparison, `progress.phase=complete`, and eight timeline entries.
 - Browser proof: in headless Chromium against `http://127.0.0.1:18081`, the page was refreshed mid-processing and still restored `润色进行中`; after completion it showed `待开始下一轮`, the preview meta `6 段·已处理 6 个片段`, the persisted timeline, and a visible TXT download button.
+
+## History Feature 2026-04-19
+
+- [x] Extend `GET /sessions` to return `SessionListItem{session, progress, metrics}`
+- [x] Add `round` to persisted timeline entries without a new SQL migration
+- [x] Add `GET /sessions/:id/history` aggregated history endpoint
+- [x] Add history-list query support for `q` and `sort`
+- [x] Re-verify delete path cleans persisted history state
+- [x] Add backend tests for metrics, history payloads, timeline round propagation, and list filters
+- [x] Run `gofmt`, `go vet ./...`, and `go test ./... -count=1`
+
+Review notes:
+- The backend now exposes history-list metadata in one response instead of forcing the frontend to fan out on every row.
+- Timeline grouping reused the existing `audit_log.detail` JSON payload by adding a `round` key, so no new migration was needed for history grouping.
+- `GET /sessions/:id/history` aggregates the current session, persisted progress, derived metrics, per-round summaries, and an ascending full timeline in one payload.
+- Search and sort stay server-side with a strict whitelist for `sort` and parameter binding for `q`, which keeps the API predictable and avoids unsafe SQL construction.
+- Verification passed with `go vet ./...` and `go test ./... -count=1`; targeted handler and service tests cover the new list shape, history route, timeline round propagation, and delete cleanup behavior.
+
+## SSE Timeout Incident 2026-04-19
+
+- [x] Capture the stuck-looking round evidence from live `/state`, `/history`, and backend logs
+- [x] Identify the root cause in HTTP server timeout configuration rather than workflow execution
+- [x] Disable the default HTTP `write_timeout` that was truncating SSE after 30s
+- [x] Update the example config so new environments inherit the streaming-safe default
+- [x] Add a config regression test for the SSE-safe timeout default
+- [x] Restart the managed backend and verify a single `/stream` connection survives past 30s and receives round 2 completion
+
+Review notes:
+- Root cause: the global HTTP `WriteTimeout` default was `30s`, and Go's server applies that limit to the whole SSE response lifetime. That caused `/api/v1/sessions/:id/stream` to be cut off at the 30-second mark even while the workflow kept running in the background.
+- Failure evidence: the user-visible workspace froze at `第 2 / 2 轮 · 33% · 2/6` while the backend `/state` for the same session had already advanced to `round=2, phase=complete, percent=100`, and the backend access log showed the matching `/stream` request ending at exactly `30s`.
+- Fix: change the default `http.write_timeout` to `0s` in `pkg/config/config.go`, mirror that in `deploy/config.example.yaml`, and add `pkg/config/config_test.go` to lock the default behavior.
+- Verification: after restarting `naturalize-backend`, an idle SSE client stayed connected for `35s` until the client aborted it; then an end-to-end script kept one `/stream` connection open across both rounds and received the round 2 `complete` event at `36223ms`, which directly covers the previously broken time window.
+
+## History Feature — Frontend 2026-04-19
+
+- [x] C-F0 契约对齐（`Claude/SHARED_CONTRACT.md`、`Codex/SHARED_CONTRACT.md`、后端 `domain.SessionListItem` / `SessionHistory` / `SessionTimelineEntry.Round` 已对齐）
+- [x] C-F1 `web/src/types.ts` 新增 `SessionListItem` / `SessionListResponse` / `RoundSummary` / `RoundHistoryEntry` / `SessionHistoryResponse`；`TimelineEntry.round` 改为可选
+- [x] C-F2 `web/src/api.ts` 新增 `ListSessionsParams` / `listSessions(params)` / `getSessionHistory(id)`
+- [x] C-F3 `/history`、`/history/:sessionId` 路由与菜单注册（`HistoryOutlined`）
+- [x] C-F4 `HistoryPage.tsx`:搜索 debounce 300ms、状态筛选、排序、分页、删除确认、空态分「无记录」「无匹配」
+- [x] C-F5 `HistoryDetailPage.tsx`:`SessionSummaryCard` + `RoundHistoryList` + `GroupedActivityTimeline`,Round Collapse 带下载/对比抽屉(复用只读 `CardReviewPanel`)
+- [x] C-F6 `useSession.adopt(sessionId)` 设置 `localStorage` 并拉取 `getSessionState`,失败清 key
+- [x] C-F7 工作台 `PageContainer.extra` 加「历史记录」按钮,空态提示从历史继续
+- [x] C-F8 `useHistoryList` / `useHistoryDetail` hooks,`AbortController` 竞态处理
+- [x] C-F9 `npm run build` 通过;`npm run lint` 维持 3 条存量报错(`use-agents.ts`、`use-session.ts`),新代码零新增报错
+- [x] C-F10 更新 `tasks/todo.md` 与 PR 描述
+
+PR 要点:
+- 新路由 `/history`、`/history/:sessionId`;工作台补入口链接。
+- 前端 API 新增 `listSessions(params)` / `getSessionHistory(id)` 并扩展类型。
+- **破坏性变更**:`GET /api/v1/sessions` 响应从 `domain.Session[]` 改为 `SessionListItem[]`(包装 `session/progress/metrics`),旧调用方需更新。
+- `CardReviewPanel` 增加 `readOnly` prop 供历史详情页复用,不破坏工作台现有行为。
+- 已知风险:详情页复用 `useSession` 仅为调用 `adopt`,会在页面挂载时短暂开一个 EventSource(与工作台一致),后续可通过抽出 session context 优化。
+- 手测清单(待手动过一遍):上传 → 列表出现 → 搜索收敛 → 状态筛选/排序 → 详情 Round Collapse 下载/对比 → 删除后刷新仍消失 → 暂停项继续处理跳回工作台。
