@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "project_root": "/Users/iluwen/Documents/Code/Workspace/Go/AI_Agents/Naturalize",
-  "updated_at": "2026-04-19T02:53:31Z",
+  "updated_at": "2026-04-19T03:37:47Z",
   "sessions": [
     {
       "service_name": "frontend",
@@ -16,7 +16,7 @@
       "stopped_at": null,
       "last_action": "restart",
       "last_action_at": "2026-04-19T00:08:11Z",
-      "last_checked_at": "2026-04-19T02:53:31Z",
+      "last_checked_at": "2026-04-19T03:37:46Z",
       "managed_by": "arc:serve"
     },
     {
@@ -32,7 +32,7 @@
       "stopped_at": null,
       "last_action": "restart",
       "last_action_at": "2026-04-19T02:47:34Z",
-      "last_checked_at": "2026-04-19T02:53:31Z",
+      "last_checked_at": "2026-04-19T03:37:46Z",
       "managed_by": "arc:serve"
     },
     {
@@ -44,11 +44,11 @@
         "18081"
       ],
       "status": "running",
-      "started_at": "2026-04-19T02:51:21Z",
+      "started_at": "2026-04-19T03:37:47Z",
       "stopped_at": null,
       "last_action": "restart",
-      "last_action_at": "2026-04-19T02:51:21Z",
-      "last_checked_at": "2026-04-19T02:53:31Z",
+      "last_action_at": "2026-04-19T03:37:47Z",
+      "last_checked_at": "2026-04-19T03:37:47Z",
       "managed_by": "arc:serve"
     }
   ]

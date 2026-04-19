@@ -80,3 +80,19 @@ Review notes:
 - Fix: `deploy/mock-openai/server.mjs` now parses `[ROUND n]`, applies deterministic Chinese rewrite heuristics per round, and logs concise input/output debug evidence for each request.
 - Runtime contract: the repository-local mock is now managed in tmux on `127.0.0.1:18788`, and the repository-local backend is managed in tmux on `127.0.0.1:18081` with provider URLs pointing to that mock.
 - Verification: before the fix, round 1 on `needs_polish_demo.txt` returned `changedCount=0`; after the fix, round 1 returned `changedCount=6` with visible rewrites, round 2 returned `changedCount=6` with further refinement, and diff payloads now carry non-trivial `aiRate` values.
+
+## Session State Persistence Incident 2026-04-19
+
+- [x] Record the persistence scope and inspect the current code path for session restore
+- [x] Re-run `gofmt`, `go test ./...`, and `npm run build`
+- [x] Restart the managed backend and confirm migration `000007` applies cleanly
+- [x] Verify `GET /api/v1/sessions/:id/state` returns session, preview, comparison, progress, and timeline
+- [x] Run a live document flow and confirm refresh/re-entry restores backend state instead of losing progress
+- [x] Record review notes and add the lesson for recoverable state
+
+Review notes:
+- Root cause: the existing product only persisted durable session and round artifacts; live progress and the activity timeline were effectively frontend-memory plus Redis SSE, so a refresh could lose the visible execution state even though the backend already had the core document outputs.
+- Fix: add a dedicated backend session-state repository backed by PostgreSQL, persist progress snapshots into `session_progress`, reuse `audit_log` for timeline entries, wrap the live publisher with `TrackingPublisher`, and expose a single `GET /api/v1/sessions/:id/state` endpoint for frontend restore.
+- Frontend decision: do not add browser SQLite for this path. The Vite app now restores from backend state and only keeps the active `sessionId` in `localStorage` as a pointer to the recoverable server-side session.
+- Verification: `go test ./...` and `npm run build` passed after `gofmt`; the managed backend was restarted on `127.0.0.1:18081`; a live API run on `testdata/needs_polish_demo.txt` returned early `/state` data with `progress.phase=queued` and `timeline=["文档已提交"]`, then final `/state` data with preview, diff comparison, `progress.phase=complete`, and eight timeline entries.
+- Browser proof: in headless Chromium against `http://127.0.0.1:18081`, the page was refreshed mid-processing and still restored `润色进行中`; after completion it showed `待开始下一轮`, the preview meta `6 段·已处理 6 个片段`, the persisted timeline, and a visible TXT download button.
