@@ -177,7 +177,9 @@ type Checker interface {
 | 输出契约注入 | 每个 chunk prompt 必须附加 `[OUTPUT CONTRACT]` 文本块 |
 | Prompt 格式 | `[ROUND N]\n[CHUNK id]\n\n{prompt}\n\n{contract}\n\n[INPUT TEXT]\n{text}` |
 | 4 级分块 | 段落 → 句子边界 → 标点边界 → 硬截断，每块上限可配置（默认 850） |
-| Quality Gate 基础检查 | 空输出、禁止模式（9 个）、Markdown 注入、异常膨胀 |
+| Quality Gate 基础检查 | 空输出、禁止模式（9 个）、Markdown 注入、异常膨胀、高启发式风险分（AI 率）拦截 |
+
+> **进阶架构说明**：当前系统通过启发式规则和动态回退机制（Quality Gate 拦截 + Recovery Agent 定向靶向纠错）控制 AI 生成痕迹。为进一步提升降重能力并对标外部真实 AI 检测器，长期架构将向 **多维统计信号融合 (Perplexity, Burstiness, 功能词 KL 散度等)**、**句级 Best-of-N 采样** 以及 **用户 Style Anchor (个性化风格对齐)** 演进。详细的理论推导与工程设计草案参见 [Claude 解决 AI 率优化问题的思路](../03-findings/01-claude-ai-rate-solution.md) 及 [统计学与跨学科方法](../03-findings/02-statistical-methods.md)。
 | 轮次幂等 | 同一 session + round_number 的重复写入替换而非追加 |
 | 结构保留 | 改写后必须保持原段落顺序、编号结构、术语不变 |
 | 零添加 | 不添加新事实、数据、引用或结论 |

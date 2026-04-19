@@ -24,6 +24,8 @@
 | 序号 | 文档 | 内容 |
 | :--- | :--- | :--- |
 | 1 | [AI 率与两轮润色问题清单](../03-findings/00-ai-rate-two-pass-issues.md) | 记录 AI 率命名、启发式评分、两轮流程与 agent 执行路径之间的已确认问题 |
+| 2 | [Claude 解决 AI 率优化问题的思路](../03-findings/01-claude-ai-rate-solution.md) | 工业级解决方案：多检测器融合、句级 Best-of-N 采样、复合损失函数 |
+| 3 | [统计学与跨学科方法](../03-findings/02-statistical-methods.md) | AI 特征数学降分原理：PPL, Burstiness, 功能词 KL 散度, Style Anchor |
 
 ### 交付计划
 
