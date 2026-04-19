@@ -8,6 +8,8 @@ import (
 	"unicode/utf8"
 )
 
+const AIRateDetectorName = "启发式规则"
+
 var aiStrongPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`在当前[^。；\n]{0,24}背景下`),
 	regexp.MustCompile(`从(?:实际情况|方法层面|整体上)来看`),

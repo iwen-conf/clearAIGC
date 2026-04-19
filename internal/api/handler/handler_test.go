@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -18,13 +19,20 @@ import (
 	"github.com/iwen-conf/Naturalize/pkg/storage"
 )
 
-type fakeSessionRepository struct{}
+type fakeSessionRepository struct {
+	session *domain.Session
+}
 
 func (r *fakeSessionRepository) Create(context.Context, *domain.Session) error {
 	return nil
 }
 
 func (r *fakeSessionRepository) Get(context.Context, uuid.UUID) (*domain.Session, error) {
+	if r.session != nil {
+		copySession := *r.session
+		copySession.Rounds = append([]domain.Round(nil), r.session.Rounds...)
+		return &copySession, nil
+	}
 	return nil, ipostgres.ErrNotFound
 }
 
@@ -99,6 +107,56 @@ func (e *fakeExporter) Export(_ context.Context, text string, _ domain.DocumentF
 	return os.WriteFile(destination, []byte(text), 0o644)
 }
 
+type fakeStateRepository struct {
+	progress *domain.SessionProgressSnapshot
+	timeline []domain.SessionTimelineEntry
+}
+
+func (r *fakeStateRepository) UpsertProgress(_ context.Context, snapshot *domain.SessionProgressSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	copySnapshot := *snapshot
+	if copySnapshot.UpdatedAt.IsZero() {
+		copySnapshot.UpdatedAt = time.Now().UTC()
+	}
+	r.progress = &copySnapshot
+	return nil
+}
+
+func (r *fakeStateRepository) GetProgress(context.Context, uuid.UUID) (*domain.SessionProgressSnapshot, error) {
+	if r.progress == nil {
+		return nil, ipostgres.ErrNotFound
+	}
+	copySnapshot := *r.progress
+	return &copySnapshot, nil
+}
+
+func (r *fakeStateRepository) AppendTimeline(_ context.Context, entry *domain.SessionTimelineEntry) error {
+	if entry == nil {
+		return nil
+	}
+	copyEntry := *entry
+	if copyEntry.ID == "" {
+		copyEntry.ID = uuid.NewString()
+	}
+	if copyEntry.Timestamp == 0 {
+		copyEntry.Timestamp = time.Now().UnixMilli()
+	}
+	r.timeline = append([]domain.SessionTimelineEntry{copyEntry}, r.timeline...)
+	return nil
+}
+
+func (r *fakeStateRepository) ListTimeline(context.Context, uuid.UUID, int) ([]domain.SessionTimelineEntry, error) {
+	return append([]domain.SessionTimelineEntry(nil), r.timeline...), nil
+}
+
+func (r *fakeStateRepository) DeleteForSession(_ context.Context, _ uuid.UUID) error {
+	r.progress = nil
+	r.timeline = nil
+	return nil
+}
+
 type fakeHealth struct{}
 
 func (h fakeHealth) Live(*gin.Context)   {}
@@ -129,7 +187,7 @@ type errorEnvelope struct {
 func TestListCardsReturnsCardPayload(t *testing.T) {
 	t.Parallel()
 
-	router, sessionID, _, _ := newHandlerHarness(t, &domain.Manifest{
+	router, sessionID, _, _, _ := newHandlerHarness(t, &domain.Manifest{
 		RoundID: uuid.New(),
 		Chunks: []domain.Chunk{
 			{
@@ -171,12 +229,15 @@ func TestListCardsReturnsCardPayload(t *testing.T) {
 	if got := resp.Cards[0].State; got != domain.ChunkReviewPending {
 		t.Fatalf("state mismatch: %q", got)
 	}
+	if got := resp.Cards[0].Detector; got != domain.AIRateDetectorName {
+		t.Fatalf("detector mismatch: %q", got)
+	}
 }
 
 func TestAcceptCardReturnsUpdatedCard(t *testing.T) {
 	t.Parallel()
 
-	router, sessionID, manifestRepo, _ := newHandlerHarness(t, &domain.Manifest{
+	router, sessionID, manifestRepo, _, _ := newHandlerHarness(t, &domain.Manifest{
 		RoundID: uuid.New(),
 		Chunks: []domain.Chunk{
 			{ID: "p0_c0", Text: "Original text", Output: "Rewritten text"},
@@ -206,7 +267,7 @@ func TestAcceptCardReturnsUpdatedCard(t *testing.T) {
 func TestApplyAllCardsReturnsUpdatedCount(t *testing.T) {
 	t.Parallel()
 
-	router, sessionID, _, _ := newHandlerHarness(t, &domain.Manifest{
+	router, sessionID, _, _, _ := newHandlerHarness(t, &domain.Manifest{
 		RoundID: uuid.New(),
 		Chunks: []domain.Chunk{
 			{ID: "p0_c0", Text: "A", Output: "A+", State: domain.ChunkReviewPending},
@@ -240,7 +301,7 @@ func TestApplyAllCardsReturnsUpdatedCount(t *testing.T) {
 func TestRejectMissingCardReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
-	router, sessionID, _, _ := newHandlerHarness(t, &domain.Manifest{
+	router, sessionID, _, _, _ := newHandlerHarness(t, &domain.Manifest{
 		RoundID: uuid.New(),
 	})
 
@@ -261,10 +322,79 @@ func TestRejectMissingCardReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestGetSessionStateReturnsPersistedState(t *testing.T) {
+	t.Parallel()
+
+	router, sessionID, _, _, stateRepo := newHandlerHarness(t, &domain.Manifest{
+		RoundID: uuid.New(),
+		Chunks: []domain.Chunk{
+			{ID: "p0_c0", Text: "Original text", Output: "Rewritten text", Status: domain.ChunkPassed},
+		},
+	})
+	stateRepo.progress = &domain.SessionProgressSnapshot{
+		SessionID:       sessionID,
+		Round:           1,
+		Phase:           "chunk-complete",
+		CompletedChunks: 1,
+		TotalChunks:     2,
+		Percent:         50,
+		ProviderUsed:    "openai-responses",
+		UpdatedAt:       time.Now().UTC(),
+	}
+	stateRepo.timeline = []domain.SessionTimelineEntry{
+		{
+			ID:        "1",
+			SessionID: sessionID,
+			Tone:      domain.TimelineToneNeutral,
+			Title:     "文档已提交",
+			Detail:    "第一轮润色已开始。",
+			Timestamp: time.Now().UnixMilli(),
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions/"+sessionID.String()+"/state", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+
+	var resp struct {
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
+		Preview *struct {
+			Text string `json:"text"`
+		} `json:"preview"`
+		Progress *struct {
+			Phase string `json:"phase"`
+		} `json:"progress"`
+		Timeline []struct {
+			Title string `json:"title"`
+		} `json:"timeline"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Session.ID != sessionID.String() {
+		t.Fatalf("session id mismatch: %s", resp.Session.ID)
+	}
+	if resp.Preview == nil || resp.Preview.Text != "legacy output" {
+		t.Fatalf("preview mismatch: %+v", resp.Preview)
+	}
+	if resp.Progress == nil || resp.Progress.Phase != "chunk-complete" {
+		t.Fatalf("progress mismatch: %+v", resp.Progress)
+	}
+	if len(resp.Timeline) != 1 || resp.Timeline[0].Title != "文档已提交" {
+		t.Fatalf("timeline mismatch: %+v", resp.Timeline)
+	}
+}
+
 func TestExportPassesSelectionToService(t *testing.T) {
 	t.Parallel()
 
-	router, sessionID, _, exporter := newHandlerHarness(t, &domain.Manifest{
+	router, sessionID, _, exporter, _ := newHandlerHarness(t, &domain.Manifest{
 		RoundID:        uuid.New(),
 		ChunkMetric:    domain.ChunkMetricChar,
 		ParagraphCount: 2,
@@ -294,7 +424,7 @@ func TestExportPassesSelectionToService(t *testing.T) {
 func TestExportRejectsInvalidSelection(t *testing.T) {
 	t.Parallel()
 
-	router, sessionID, _, _ := newHandlerHarness(t, &domain.Manifest{
+	router, sessionID, _, _, _ := newHandlerHarness(t, &domain.Manifest{
 		RoundID: uuid.New(),
 	})
 
@@ -315,7 +445,7 @@ func TestExportRejectsInvalidSelection(t *testing.T) {
 	}
 }
 
-func newHandlerHarness(t *testing.T, manifest *domain.Manifest) (*gin.Engine, uuid.UUID, *fakeManifestRepository, *fakeExporter) {
+func newHandlerHarness(t *testing.T, manifest *domain.Manifest) (*gin.Engine, uuid.UUID, *fakeManifestRepository, *fakeExporter, *fakeStateRepository) {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
@@ -337,6 +467,7 @@ func newHandlerHarness(t *testing.T, manifest *domain.Manifest) (*gin.Engine, uu
 		ID:         manifest.RoundID,
 		SessionID:  sessionID,
 		Number:     1,
+		Status:     domain.RoundCompleted,
 		OutputPath: layout.RoundOutputPath(sessionID, 1),
 	}
 	if err := os.WriteFile(round.OutputPath, []byte("legacy output"), 0o644); err != nil {
@@ -345,11 +476,27 @@ func newHandlerHarness(t *testing.T, manifest *domain.Manifest) (*gin.Engine, uu
 
 	manifestRepo := &fakeManifestRepository{manifest: cloneManifest(manifest)}
 	exporter := &fakeExporter{}
+	stateRepo := &fakeStateRepository{}
+	session := &domain.Session{
+		ID:            sessionID,
+		DocumentID:    uuid.New(),
+		DocumentName:  "test.txt",
+		DocID:         uuid.NewString(),
+		OriginPath:    layout.OriginalPath(sessionID, "test.txt"),
+		FileFormat:    domain.FormatTXT,
+		FileSizeBytes: 10,
+		PromptProfile: "cn",
+		Status:        domain.SessionCompleted,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+		Rounds:        []domain.Round{*round},
+	}
 	svc := service.NewService(
-		&fakeSessionRepository{},
+		&fakeSessionRepository{session: session},
 		&fakeRoundRepository{round: round},
 		manifestRepo,
 		nil,
+		stateRepo,
 		nil,
 		nil,
 		nil,
@@ -361,13 +508,14 @@ func newHandlerHarness(t *testing.T, manifest *domain.Manifest) (*gin.Engine, uu
 
 	h := New(svc, nil, fakeHealth{})
 	router := gin.New()
+	router.GET("/sessions/:id/state", h.GetSessionState)
 	router.GET("/sessions/:id/cards", h.ListCards)
 	router.POST("/sessions/:id/cards/apply-all", h.ApplyAllCards)
 	router.POST("/sessions/:id/cards/:cardId/accept", h.AcceptCard)
 	router.POST("/sessions/:id/cards/:cardId/reject", h.RejectCard)
 	router.GET("/sessions/:id/export", h.Export)
 
-	return router, sessionID, manifestRepo, exporter
+	return router, sessionID, manifestRepo, exporter, stateRepo
 }
 
 func cloneManifest(manifest *domain.Manifest) *domain.Manifest {

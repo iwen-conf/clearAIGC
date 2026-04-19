@@ -34,6 +34,14 @@ type QualityRepository interface {
 	GetStatsByRound(ctx context.Context, roundID uuid.UUID) (*QualityStats, error)
 }
 
+type SessionStateRepository interface {
+	UpsertProgress(ctx context.Context, snapshot *SessionProgressSnapshot) error
+	GetProgress(ctx context.Context, sessionID uuid.UUID) (*SessionProgressSnapshot, error)
+	AppendTimeline(ctx context.Context, entry *SessionTimelineEntry) error
+	ListTimeline(ctx context.Context, sessionID uuid.UUID, limit int) ([]SessionTimelineEntry, error)
+	DeleteForSession(ctx context.Context, sessionID uuid.UUID) error
+}
+
 type CheckpointStore interface {
 	compose.CheckPointStore
 	Delete(ctx context.Context, checkpointID string) error

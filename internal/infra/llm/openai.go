@@ -64,7 +64,7 @@ func (c *ResponsesClient) Complete(ctx context.Context, req domain.LLMRequest) (
 		return nil, fmt.Errorf("provider %s returned empty output", c.requester.cfg.Name)
 	}
 	return &domain.ProviderResult{
-		Provider:     c.requester.cfg.Name,
+		Provider:     c.requester.cfg.Model,
 		OutputText:   text,
 		InputTokens:  out.Usage.InputTokens,
 		OutputTokens: out.Usage.OutputTokens,
@@ -114,7 +114,7 @@ func (c *ChatClient) Complete(ctx context.Context, req domain.LLMRequest) (*doma
 		return nil, fmt.Errorf("provider %s returned empty completion", c.requester.cfg.Name)
 	}
 	return &domain.ProviderResult{
-		Provider:     c.requester.cfg.Name,
+		Provider:     c.requester.cfg.Model,
 		OutputText:   strings.TrimSpace(out.Choices[0].Message.Content),
 		InputTokens:  out.Usage.PromptTokens,
 		OutputTokens: out.Usage.CompletionTokens,

@@ -33,6 +33,8 @@ type cardResponse struct {
 	Original       string                  `json:"original"`
 	Rewrite        string                  `json:"rewrite"`
 	AIRate         float64                 `json:"aiRate"`
+	OutputAIRate   float64                 `json:"outputAiRate"`
+	Detector       string                  `json:"detector"`
 	State          domain.ChunkReviewState `json:"state"`
 	Status         domain.ChunkStatus      `json:"status"`
 	Checks         []domain.CheckResult    `json:"checks"`
@@ -159,6 +161,19 @@ func (h *Handler) GetSession(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, session)
+}
+
+func (h *Handler) GetSessionState(c *gin.Context) {
+	sessionID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	state, err := h.service.ReadState(c.Request.Context(), sessionID)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, state)
 }
 
 func (h *Handler) DeleteSession(c *gin.Context) {
@@ -451,6 +466,8 @@ func cardFromDiff(chunk domain.ChunkDiff) cardResponse {
 		Original:       chunk.Input,
 		Rewrite:        chunk.Output,
 		AIRate:         chunk.AIRate,
+		OutputAIRate:   chunk.OutputAIRate,
+		Detector:       chunk.Detector,
 		State:          chunk.State,
 		Status:         chunk.Status,
 		Checks:         chunk.Checks,

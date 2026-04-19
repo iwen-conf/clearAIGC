@@ -31,6 +31,7 @@ type Service struct {
 	rounds      domain.RoundRepository
 	manifests   domain.ManifestRepository
 	quality     domain.QualityRepository
+	states      domain.SessionStateRepository
 	pipeline    *workflow.Pipeline
 	publisher   domain.ProgressPublisher
 	checkpoints domain.CheckpointStore
@@ -52,6 +53,7 @@ func NewService(
 	rounds domain.RoundRepository,
 	manifests domain.ManifestRepository,
 	quality domain.QualityRepository,
+	states domain.SessionStateRepository,
 	pipeline *workflow.Pipeline,
 	publisher domain.ProgressPublisher,
 	checkpoints domain.CheckpointStore,
@@ -65,6 +67,7 @@ func NewService(
 		rounds:      rounds,
 		manifests:   manifests,
 		quality:     quality,
+		states:      states,
 		pipeline:    pipeline,
 		publisher:   publisher,
 		checkpoints: checkpoints,
@@ -138,6 +141,9 @@ func (s *Service) ListSessions(ctx context.Context, filter domain.SessionListFil
 }
 
 func (s *Service) DeleteSession(ctx context.Context, sessionID uuid.UUID) error {
+	if s.states != nil {
+		_ = s.states.DeleteForSession(ctx, sessionID)
+	}
 	if err := s.sessions.Delete(ctx, sessionID); err != nil {
 		if errors.Is(err, ipostgres.ErrNotFound) {
 			return ErrSessionNotFound
@@ -209,6 +215,7 @@ func (s *Service) StartNextRound(ctx context.Context, sessionID uuid.UUID, chunk
 	}
 
 	session.Rounds = append(session.Rounds, *round)
+	s.recordRoundStart(ctx, session.ID, round.Number)
 	s.manager.Register(session.ID, round.ID)
 	go s.runRound(context.Background(), session, round)
 
@@ -276,6 +283,7 @@ func (s *Service) ResumeRound(ctx context.Context, sessionID uuid.UUID) (*domain
 		return nil, err
 	}
 
+	s.recordRoundResume(ctx, session.ID, round.Number)
 	s.manager.Register(session.ID, round.ID)
 	go s.runRound(context.Background(), session, round)
 	return round, nil
@@ -321,6 +329,55 @@ func (s *Service) ReadDiff(ctx context.Context, sessionID uuid.UUID, roundNumber
 		Round:  roundNumber,
 		Chunks: buildChunkDiffs(manifest.Chunks),
 	}, nil
+}
+
+func (s *Service) ReadState(ctx context.Context, sessionID uuid.UUID) (*domain.SessionState, error) {
+	session, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	state := &domain.SessionState{
+		Session:  session,
+		Timeline: []domain.SessionTimelineEntry{},
+	}
+
+	if s.states != nil {
+		progress, progressErr := s.states.GetProgress(ctx, sessionID)
+		if progressErr == nil {
+			state.Progress = progress
+		} else if !errors.Is(progressErr, ipostgres.ErrNotFound) {
+			return nil, progressErr
+		}
+
+		timeline, timelineErr := s.states.ListTimeline(ctx, sessionID, 100)
+		if timelineErr != nil {
+			return nil, timelineErr
+		}
+		state.Timeline = timeline
+	}
+
+	round := latestCompletedRound(session)
+	if round == nil {
+		return state, nil
+	}
+
+	text, manifest, err := s.ReadOutput(ctx, sessionID, round.Number)
+	if err != nil {
+		return nil, err
+	}
+	diff, err := s.ReadDiff(ctx, sessionID, round.Number)
+	if err != nil {
+		return nil, err
+	}
+
+	state.Preview = &domain.OutputPreview{Text: text}
+	if manifest != nil {
+		state.Preview.SegmentCount = manifest.ChunkCount
+		state.Preview.ParagraphCount = manifest.ParagraphCount
+	}
+	state.Comparison = diff
+	return state, nil
 }
 
 func (s *Service) ListCards(ctx context.Context, sessionID uuid.UUID, roundNumber int) (*domain.RoundDiff, error) {
@@ -551,6 +608,73 @@ func (s *Service) Publisher() domain.ProgressPublisher {
 	return s.publisher
 }
 
+func latestCompletedRound(session *domain.Session) *domain.Round {
+	var latest *domain.Round
+	for index := range session.Rounds {
+		round := &session.Rounds[index]
+		if round.Status != domain.RoundCompleted {
+			continue
+		}
+		if latest == nil || round.Number > latest.Number {
+			latest = round
+		}
+	}
+	return latest
+}
+
+func (s *Service) recordRoundStart(ctx context.Context, sessionID uuid.UUID, roundNumber int) {
+	if s.states == nil {
+		return
+	}
+
+	_ = s.states.UpsertProgress(ctx, &domain.SessionProgressSnapshot{
+		SessionID: sessionID,
+		Round:     roundNumber,
+		Phase:     "queued",
+	})
+
+	title := "文档已提交"
+	detail := "第一轮润色已开始。"
+	if roundNumber > 1 {
+		title = fmt.Sprintf("第 %d 轮已开始", roundNumber)
+		detail = fmt.Sprintf("第 %d 轮处理已开始。", roundNumber)
+	}
+	_ = s.states.AppendTimeline(ctx, &domain.SessionTimelineEntry{
+		SessionID: sessionID,
+		Tone:      domain.TimelineToneNeutral,
+		Title:     title,
+		Detail:    detail,
+	})
+}
+
+func (s *Service) recordRoundResume(ctx context.Context, sessionID uuid.UUID, roundNumber int) {
+	if s.states == nil {
+		return
+	}
+
+	snapshot := &domain.SessionProgressSnapshot{
+		SessionID: sessionID,
+		Round:     roundNumber,
+		Phase:     "resumed",
+	}
+	if existing, err := s.states.GetProgress(ctx, sessionID); err == nil {
+		snapshot.CompletedChunks = existing.CompletedChunks
+		snapshot.TotalChunks = existing.TotalChunks
+		snapshot.Percent = existing.Percent
+		snapshot.ChunkID = existing.ChunkID
+		snapshot.ParagraphIndex = existing.ParagraphIndex
+		snapshot.ChunkIndex = existing.ChunkIndex
+		snapshot.ProviderUsed = existing.ProviderUsed
+	}
+	_ = s.states.UpsertProgress(ctx, snapshot)
+	_ = s.states.AppendTimeline(ctx, &domain.SessionTimelineEntry{
+		SessionID: sessionID,
+		Tone:      domain.TimelineToneNeutral,
+		Title:     "已继续处理",
+		Detail:    fmt.Sprintf("第 %d 轮已恢复。", roundNumber),
+	})
+}
+
 func normalizeManifest(manifest *domain.Manifest) {
 	for index := range manifest.Chunks {
 		manifest.Chunks[index].State = normalizeChunkReviewState(manifest.Chunks[index].State)
@@ -590,6 +714,8 @@ func buildChunkDiff(chunk domain.Chunk) domain.ChunkDiff {
 	if chunk.Output != "" {
 		charDelta = utf8.RuneCountInString(chunk.Output) - utf8.RuneCountInString(chunk.Text)
 	}
+	inputAIRate := domain.EstimateAIRate(chunk.Text)
+	outputAIRate := domain.EstimateAIRate(chunk.Output)
 	return domain.ChunkDiff{
 		ID:             chunk.ID,
 		ParagraphIndex: chunk.ParagraphIndex,
@@ -598,7 +724,9 @@ func buildChunkDiff(chunk domain.Chunk) domain.ChunkDiff {
 		Output:         chunk.Output,
 		Status:         chunk.Status,
 		CharDelta:      charDelta,
-		AIRate:         domain.EstimateAIRate(chunk.Text),
+		AIRate:         inputAIRate,
+		OutputAIRate:   outputAIRate,
+		Detector:       domain.AIRateDetectorName,
 		State:          normalizeChunkReviewState(chunk.State),
 		Checks:         append([]domain.CheckResult(nil), chunk.Checks...),
 	}

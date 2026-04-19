@@ -21,6 +21,7 @@ func NewRouter(h *handler.Handler, allowedOrigins []string) *gin.Engine {
 		v1.POST("/sessions/batch", h.CreateSessionBatch)
 		v1.GET("/sessions", h.ListSessions)
 		v1.GET("/sessions/:id", h.GetSession)
+		v1.GET("/sessions/:id/state", h.GetSessionState)
 		v1.DELETE("/sessions/:id", h.DeleteSession)
 
 		v1.POST("/sessions/:id/start", h.StartRound)

@@ -61,6 +61,9 @@ func TestResponsesClientUsesResponsesAPI(t *testing.T) {
 	if result.RawRequestID != "openai-req-1" {
 		t.Fatalf("unexpected raw request id: %s", result.RawRequestID)
 	}
+	if result.Provider != "gpt-test" {
+		t.Fatalf("unexpected provider/model label: %s", result.Provider)
+	}
 }
 
 func TestProviderChainFallsBackToChat(t *testing.T) {
@@ -117,7 +120,7 @@ func TestProviderChainFallsBackToChat(t *testing.T) {
 	if !strings.Contains(result.OutputText, "fallback output") {
 		t.Fatalf("unexpected output: %q", result.OutputText)
 	}
-	if result.Provider != "chat" {
-		t.Fatalf("unexpected provider: %s", result.Provider)
+	if result.Provider != "gpt-test" {
+		t.Fatalf("unexpected provider/model label: %s", result.Provider)
 	}
 }

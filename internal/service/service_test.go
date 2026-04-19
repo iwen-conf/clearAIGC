@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -15,6 +16,7 @@ import (
 )
 
 type fakeSessionRepository struct {
+	session *domain.Session
 	lockErr error
 }
 
@@ -23,6 +25,11 @@ func (r *fakeSessionRepository) Create(context.Context, *domain.Session) error {
 }
 
 func (r *fakeSessionRepository) Get(context.Context, uuid.UUID) (*domain.Session, error) {
+	if r.session != nil {
+		copySession := *r.session
+		copySession.Rounds = append([]domain.Round(nil), r.session.Rounds...)
+		return &copySession, nil
+	}
 	return nil, ipostgres.ErrNotFound
 }
 
@@ -104,6 +111,56 @@ func (e *fakeExporter) Export(_ context.Context, text string, format domain.Docu
 	return os.WriteFile(destination, []byte(text), 0o644)
 }
 
+type fakeStateRepository struct {
+	progress *domain.SessionProgressSnapshot
+	timeline []domain.SessionTimelineEntry
+}
+
+func (r *fakeStateRepository) UpsertProgress(_ context.Context, snapshot *domain.SessionProgressSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	copySnapshot := *snapshot
+	if copySnapshot.UpdatedAt.IsZero() {
+		copySnapshot.UpdatedAt = time.Now().UTC()
+	}
+	r.progress = &copySnapshot
+	return nil
+}
+
+func (r *fakeStateRepository) GetProgress(context.Context, uuid.UUID) (*domain.SessionProgressSnapshot, error) {
+	if r.progress == nil {
+		return nil, ipostgres.ErrNotFound
+	}
+	copySnapshot := *r.progress
+	return &copySnapshot, nil
+}
+
+func (r *fakeStateRepository) AppendTimeline(_ context.Context, entry *domain.SessionTimelineEntry) error {
+	if entry == nil {
+		return nil
+	}
+	copyEntry := *entry
+	if copyEntry.ID == "" {
+		copyEntry.ID = uuid.NewString()
+	}
+	if copyEntry.Timestamp == 0 {
+		copyEntry.Timestamp = time.Now().UnixMilli()
+	}
+	r.timeline = append([]domain.SessionTimelineEntry{copyEntry}, r.timeline...)
+	return nil
+}
+
+func (r *fakeStateRepository) ListTimeline(context.Context, uuid.UUID, int) ([]domain.SessionTimelineEntry, error) {
+	return append([]domain.SessionTimelineEntry(nil), r.timeline...), nil
+}
+
+func (r *fakeStateRepository) DeleteForSession(_ context.Context, _ uuid.UUID) error {
+	r.progress = nil
+	r.timeline = nil
+	return nil
+}
+
 func TestReadDiffBuildsChunkComparison(t *testing.T) {
 	t.Parallel()
 
@@ -146,6 +203,12 @@ func TestReadDiffBuildsChunkComparison(t *testing.T) {
 	}
 	if got := diff.Chunks[0].AIRate; got < 0.45 {
 		t.Fatalf("chunk aiRate too low: %v", got)
+	}
+	if got := diff.Chunks[0].OutputAIRate; got < 0.45 {
+		t.Fatalf("chunk output aiRate too low: %v", got)
+	}
+	if got := diff.Chunks[0].Detector; got != domain.AIRateDetectorName {
+		t.Fatalf("chunk detector mismatch: %q", got)
 	}
 	if got := diff.Chunks[0].State; got != domain.ChunkReviewPending {
 		t.Fatalf("chunk state mismatch: %q", got)
@@ -238,6 +301,66 @@ func TestApplyAllCardsAcceptsOnlyPending(t *testing.T) {
 	}
 	if got := cards[2].State; got != domain.ChunkReviewRejected {
 		t.Fatalf("rejected card changed unexpectedly: %q", got)
+	}
+}
+
+func TestReadStateReturnsPersistedProgressAndTimeline(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(t, &domain.Manifest{
+		RoundID: uuid.New(),
+		Chunks: []domain.Chunk{
+			{
+				ID:             "p0_c0",
+				ParagraphIndex: 0,
+				ChunkIndex:     0,
+				Text:           "Original text",
+				Output:         "Rewritten text",
+				Status:         domain.ChunkPassed,
+			},
+		},
+	})
+	sessionID := service.rounds.(*fakeRoundRepository).round.SessionID
+	stateRepo := service.states.(*fakeStateRepository)
+	stateRepo.progress = &domain.SessionProgressSnapshot{
+		SessionID:       sessionID,
+		Round:           1,
+		Phase:           "chunk-complete",
+		CompletedChunks: 1,
+		TotalChunks:     3,
+		Percent:         33.3,
+		ProviderUsed:    "openai-responses",
+		UpdatedAt:       time.Now().UTC(),
+	}
+	stateRepo.timeline = []domain.SessionTimelineEntry{
+		{
+			ID:        "1",
+			SessionID: sessionID,
+			Tone:      domain.TimelineToneNeutral,
+			Title:     "文档已提交",
+			Detail:    "第一轮润色已开始。",
+			Timestamp: time.Now().UnixMilli(),
+		},
+	}
+
+	state, err := service.ReadState(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("ReadState returned error: %v", err)
+	}
+	if state.Session == nil || state.Session.ID != sessionID {
+		t.Fatalf("session mismatch: %+v", state.Session)
+	}
+	if state.Progress == nil || state.Progress.Phase != "chunk-complete" {
+		t.Fatalf("progress mismatch: %+v", state.Progress)
+	}
+	if len(state.Timeline) != 1 || state.Timeline[0].Title != "文档已提交" {
+		t.Fatalf("timeline mismatch: %+v", state.Timeline)
+	}
+	if state.Preview == nil || state.Preview.Text != "legacy output" {
+		t.Fatalf("preview mismatch: %+v", state.Preview)
+	}
+	if state.Comparison == nil || len(state.Comparison.Chunks) != 1 {
+		t.Fatalf("comparison mismatch: %+v", state.Comparison)
 	}
 }
 
@@ -342,16 +465,33 @@ func newTestService(t *testing.T, manifest *domain.Manifest) *Service {
 		ID:         manifest.RoundID,
 		SessionID:  sessionID,
 		Number:     1,
+		Status:     domain.RoundCompleted,
 		OutputPath: layout.RoundOutputPath(sessionID, 1),
 	}
 	if err := os.WriteFile(round.OutputPath, []byte("legacy output"), 0o644); err != nil {
 		t.Fatalf("write round output: %v", err)
 	}
 
+	session := &domain.Session{
+		ID:            sessionID,
+		DocumentID:    uuid.New(),
+		DocumentName:  "test.txt",
+		DocID:         uuid.NewString(),
+		OriginPath:    layout.OriginalPath(sessionID, "test.txt"),
+		FileFormat:    domain.FormatTXT,
+		FileSizeBytes: 10,
+		PromptProfile: "cn",
+		Status:        domain.SessionCompleted,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+		Rounds:        []domain.Round{*round},
+	}
+
 	return &Service{
-		sessions:  &fakeSessionRepository{},
+		sessions:  &fakeSessionRepository{session: session},
 		rounds:    &fakeRoundRepository{round: round},
 		manifests: &fakeManifestRepository{manifest: cloneManifest(manifest)},
+		states:    &fakeStateRepository{},
 		exporter:  &fakeExporter{},
 		layout:    layout,
 	}

@@ -77,6 +77,8 @@ type ChunkDiff struct {
 	Status         ChunkStatus      `json:"status"`
 	CharDelta      int              `json:"charDelta"`
 	AIRate         float64          `json:"aiRate"`
+	OutputAIRate   float64          `json:"outputAiRate"`
+	Detector       string           `json:"detector"`
 	State          ChunkReviewState `json:"state"`
 	Checks         []CheckResult    `json:"checks"`
 }

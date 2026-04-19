@@ -65,6 +65,7 @@ func main() {
 	roundRepo := ipostgres.NewRoundRepository(db)
 	manifestRepo := ipostgres.NewManifestRepository(db)
 	qualityRepo := ipostgres.NewQualityRepository(db)
+	stateRepo := ipostgres.NewSessionStateRepository(db)
 	agentSettingsRepo := ipostgres.NewAgentSettingsRepository(db)
 
 	if err := agentSettingsRepo.SeedIfEmpty(ctx, defaultAgentSettings(cfg)); err != nil {
@@ -114,6 +115,7 @@ func main() {
 	lexicalAgent := agent.NewLexicalMutator(agentRegistry)
 	syntaxAgent := agent.NewSyntaxRebuilder(agentRegistry)
 	coordinator := agent.NewCoordinator(agentRegistry, lexicalAgent, syntaxAgent)
+	trackingPublisher := service.NewTrackingPublisher(progressPublisher, stateRepo)
 
 	exporter := nodes.NewExporter()
 	pipeline, err := workflow.NewPipeline(
@@ -126,7 +128,7 @@ func main() {
 		coordinator,
 		recoverySupervisor,
 		checkpointStore,
-		progressPublisher,
+		trackingPublisher,
 		manager,
 	)
 	if err != nil {
@@ -138,8 +140,9 @@ func main() {
 		roundRepo,
 		manifestRepo,
 		qualityRepo,
+		stateRepo,
 		pipeline,
-		progressPublisher,
+		trackingPublisher,
 		checkpointStore,
 		exporter,
 		layout,
