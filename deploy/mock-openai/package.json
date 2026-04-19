@@ -1,0 +1,8 @@
+{
+  "name": "mock-openai",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

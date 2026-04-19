@@ -1,0 +1,3 @@
+人工智能生成文本在课程作业、技术报告和学术写作中越来越常见，但许多内容会出现明显的模板化痕迹。为了让表达更自然，系统需要在不改变事实、术语和结构的前提下，对原文进行分段改写，并且持续提供清晰的处理进度。
+
+The service should keep the original meaning intact while making the tone read more naturally. It should process the document in sections, report progress clearly, and return a clean result without extra notes or markup.

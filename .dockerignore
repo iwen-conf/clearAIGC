@@ -1,0 +1,16 @@
+.git
+.gitignore
+.DS_Store
+.vscode
+.idea
+.ace-tool
+
+bin
+coverage.out
+var
+
+web/node_modules
+web/dist
+
+**/node_modules
+**/.vite

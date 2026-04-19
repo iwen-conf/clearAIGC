@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0.0",
+  "project_root": "/Users/iluwen/Documents/Code/Workspace/Go/AI_Agents/Naturalize",
+  "updated_at": "2026-04-19T00:08:25Z",
+  "sessions": [
+    {
+      "service_name": "backend",
+      "session_name": "naturalize-backend",
+      "cwd": "/Users/iluwen/Documents/Code/Workspace/Go/AI_Agents/Naturalize",
+      "command": "env NATURALIZE_HTTP_LISTEN=:18081 NATURALIZE_DATABASE_DSN='postgres://naturalize:pass@127.0.0.1:15432/naturalize?sslmode=disable' NATURALIZE_REDIS_ADDR=127.0.0.1:16379 NATURALIZE_STORAGE_ROOT_DIR=./var/data NATURALIZE_PROVIDERS_REWRITE_BASE_URL=http://127.0.0.1:18787 NATURALIZE_PROVIDERS_REWRITE_API_KEY=dummy-rewrite-key NATURALIZE_PROVIDERS_REWRITE_MODEL=gpt-4.1-mini NATURALIZE_PROVIDERS_FALLBACK_BASE_URL=http://127.0.0.1:18787 NATURALIZE_PROVIDERS_FALLBACK_API_KEY=dummy-chat-key NATURALIZE_PROVIDERS_FALLBACK_MODEL=gpt-4.1-mini NATURALIZE_PROVIDERS_AGENT_BASE_URL=http://127.0.0.1:18787 NATURALIZE_PROVIDERS_AGENT_API_KEY=dummy-agent-key NATURALIZE_PROVIDERS_AGENT_MODEL=gpt-4.1-mini go run ./cmd/server",
+      "ports": [
+        "18081"
+      ],
+      "status": "running",
+      "started_at": "2026-04-19T00:08:03Z",
+      "stopped_at": null,
+      "last_action": "restart",
+      "last_action_at": "2026-04-19T00:08:03Z",
+      "last_checked_at": "2026-04-19T00:08:25Z",
+      "managed_by": "arc:serve"
+    },
+    {
+      "service_name": "frontend",
+      "session_name": "naturalize-frontend",
+      "cwd": "/Users/iluwen/Documents/Code/Workspace/Go/AI_Agents/Naturalize/web",
+      "command": "env VITE_API_PROXY_TARGET=http://127.0.0.1:18081 npm run dev -- --host 127.0.0.1 --port 5175 --strictPort",
+      "ports": [
+        "5175"
+      ],
+      "status": "running",
+      "started_at": "2026-04-19T00:08:11Z",
+      "stopped_at": null,
+      "last_action": "restart",
+      "last_action_at": "2026-04-19T00:08:11Z",
+      "last_checked_at": "2026-04-19T00:08:25Z",
+      "managed_by": "arc:serve"
+    }
+  ]
+}

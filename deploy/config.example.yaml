@@ -1,0 +1,60 @@
+app:
+  name: Naturalize
+  environment: development
+
+http:
+  listen: ":8080"
+  read_timeout: 30s
+  write_timeout: 30s
+  shutdown_grace: 10s
+  allowed_origins:
+    - http://localhost:3000
+
+database:
+  dsn: postgres://naturalize:pass@localhost:5432/naturalize?sslmode=disable
+  max_conns: 10
+  min_conns: 1
+  max_conn_lifetime: 1h
+
+redis:
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0
+  checkpoint_ttl: 24h
+  pubsub_prefix: naturalize
+
+storage:
+  root_dir: ./var/data
+
+providers:
+  rewrite:
+    name: openai-responses
+    base_url: https://api.openai.com
+    api_key: ${NATURALIZE_PROVIDERS_REWRITE_API_KEY}
+    model: ${NATURALIZE_PROVIDERS_REWRITE_MODEL}
+    organization: ""
+    project: ""
+    store: false
+    timeout: 90s
+    rpm_limit: 60
+    tpm_limit: 200000
+  fallback:
+    name: openai-chat
+    base_url: https://api.openai.com
+    api_key: ${NATURALIZE_PROVIDERS_FALLBACK_API_KEY}
+    model: ${NATURALIZE_PROVIDERS_FALLBACK_MODEL}
+    organization: ""
+    project: ""
+    timeout: 90s
+    rpm_limit: 60
+    tpm_limit: 200000
+  agent:
+    name: openai-agent
+    base_url: https://api.openai.com
+    api_key: ${NATURALIZE_PROVIDERS_AGENT_API_KEY}
+    model: ${NATURALIZE_PROVIDERS_AGENT_MODEL}
+    organization: ""
+    project: ""
+    timeout: 90s
+    rpm_limit: 60
+    tpm_limit: 200000
