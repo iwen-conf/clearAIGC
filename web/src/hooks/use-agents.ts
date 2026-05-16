@@ -30,8 +30,30 @@ export function useAgents(): UseAgentsResult {
   }, [])
 
   useEffect(() => {
-    void load()
-  }, [load])
+    let cancelled = false
+
+    listAgents()
+      .then((items) => {
+        if (!cancelled) {
+          setAgents(items)
+          setError(null)
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(toErrorMessage(err))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const replaceAgent = useCallback((next: AgentSetting) => {
     setAgents((current) =>

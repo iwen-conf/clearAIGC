@@ -2,7 +2,7 @@ import { Empty, Space, Typography } from 'antd'
 import { ProCard } from '@ant-design/pro-components'
 import type { OutputResponse } from '@/types'
 
-const { Paragraph, Text } = Typography
+const { Text } = Typography
 
 interface PreviewPaneProps {
   preview: OutputResponse | null
@@ -51,9 +51,9 @@ export function PreviewPane({ preview }: PreviewPaneProps) {
           }}
         >
           {paragraphs.map((paragraph, index) => (
-            <Paragraph key={`${index}-${paragraph.slice(0, 24)}`} style={{ marginBottom: 12 }}>
+            <p key={`${index}-${paragraph.slice(0, 24)}`} style={{ margin: '0 0 12px' }}>
               {paragraph}
-            </Paragraph>
+            </p>
           ))}
         </article>
       </Space>
