@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ type Config struct {
 	Database  DatabaseConfig
 	Redis     RedisConfig
 	Storage   StorageConfig
+	Scoring   ScoringConfig
 	Providers ProviderSettings
 }
 
@@ -49,10 +51,21 @@ type StorageConfig struct {
 	RootDir string
 }
 
+type ScoringConfig struct {
+	CalibrationPath     string
+	CalibrationMinPairs int
+	CalibrationWindow   int
+	DetectorCacheTTL    time.Duration
+	SemanticThreshold   float64
+	ReadabilityMaxScore float64
+}
+
 type ProviderSettings struct {
-	Rewrite  RewriteProviderConfig
-	Fallback ChatProviderConfig
-	Agent    ChatProviderConfig
+	Rewrite    RewriteProviderConfig
+	Fallback   ChatProviderConfig
+	Agent      ChatProviderConfig
+	Detector   ChatProviderConfig
+	Embeddings EmbeddingProviderConfig
 }
 
 type RewriteProviderConfig struct {
@@ -78,6 +91,17 @@ type ChatProviderConfig struct {
 	Timeout      time.Duration
 	RPMLimit     int
 	TPMLimit     int
+}
+
+type EmbeddingProviderConfig struct {
+	Name         string
+	BaseURL      string
+	APIKey       string
+	Model        string
+	Organization string
+	Project      string
+	Timeout      time.Duration
+	RPMLimit     int
 }
 
 func Load() (Config, error) {
@@ -121,6 +145,14 @@ func Load() (Config, error) {
 		Storage: StorageConfig{
 			RootDir: v.GetString("storage.root_dir"),
 		},
+		Scoring: ScoringConfig{
+			CalibrationPath:     v.GetString("scoring.calibration_path"),
+			CalibrationMinPairs: v.GetInt("scoring.calibration_min_pairs"),
+			CalibrationWindow:   v.GetInt("scoring.calibration_window"),
+			DetectorCacheTTL:    v.GetDuration("scoring.detector_cache_ttl"),
+			SemanticThreshold:   v.GetFloat64("scoring.semantic_threshold"),
+			ReadabilityMaxScore: v.GetFloat64("scoring.readability_max_score"),
+		},
 		Providers: ProviderSettings{
 			Rewrite: RewriteProviderConfig{
 				Name:         v.GetString("providers.rewrite.name"),
@@ -156,7 +188,32 @@ func Load() (Config, error) {
 				RPMLimit:     v.GetInt("providers.agent.rpm_limit"),
 				TPMLimit:     v.GetInt("providers.agent.tpm_limit"),
 			},
+			Detector: ChatProviderConfig{
+				Name:         v.GetString("providers.detector.name"),
+				BaseURL:      v.GetString("providers.detector.base_url"),
+				APIKey:       v.GetString("providers.detector.api_key"),
+				Model:        v.GetString("providers.detector.model"),
+				Organization: v.GetString("providers.detector.organization"),
+				Project:      v.GetString("providers.detector.project"),
+				Timeout:      v.GetDuration("providers.detector.timeout"),
+				RPMLimit:     v.GetInt("providers.detector.rpm_limit"),
+				TPMLimit:     v.GetInt("providers.detector.tpm_limit"),
+			},
+			Embeddings: EmbeddingProviderConfig{
+				Name:         v.GetString("providers.embeddings.name"),
+				BaseURL:      v.GetString("providers.embeddings.base_url"),
+				APIKey:       v.GetString("providers.embeddings.api_key"),
+				Model:        v.GetString("providers.embeddings.model"),
+				Organization: v.GetString("providers.embeddings.organization"),
+				Project:      v.GetString("providers.embeddings.project"),
+				Timeout:      v.GetDuration("providers.embeddings.timeout"),
+				RPMLimit:     v.GetInt("providers.embeddings.rpm_limit"),
+			},
 		},
+	}
+
+	if strings.TrimSpace(cfg.Scoring.CalibrationPath) == "" {
+		cfg.Scoring.CalibrationPath = filepath.Join(cfg.Storage.RootDir, "calibration", "detector-state.json")
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -195,6 +252,12 @@ func (c Config) Validate() error {
 	if c.Providers.Agent.Model == "" {
 		missing = append(missing, "providers.agent.model")
 	}
+	if err := validateOptionalChatProvider("providers.detector", c.Providers.Detector); err != nil {
+		return err
+	}
+	if err := validateOptionalEmbeddingProvider("providers.embeddings", c.Providers.Embeddings); err != nil {
+		return err
+	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
 	}
@@ -221,6 +284,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.pubsub_prefix", "naturalize")
 
 	v.SetDefault("storage.root_dir", "./var/data")
+	v.SetDefault("scoring.calibration_min_pairs", 8)
+	v.SetDefault("scoring.calibration_window", 128)
+	v.SetDefault("scoring.detector_cache_ttl", 24*time.Hour)
+	v.SetDefault("scoring.semantic_threshold", 0.82)
+	v.SetDefault("scoring.readability_max_score", 0.24)
 
 	v.SetDefault("providers.rewrite.name", "openai-responses")
 	v.SetDefault("providers.rewrite.base_url", "https://api.openai.com")
@@ -240,4 +308,50 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("providers.agent.timeout", 90*time.Second)
 	v.SetDefault("providers.agent.rpm_limit", 60)
 	v.SetDefault("providers.agent.tpm_limit", 200000)
+
+	v.SetDefault("providers.detector.name", "openai-detector")
+	v.SetDefault("providers.detector.base_url", "https://api.openai.com")
+	v.SetDefault("providers.detector.timeout", 60*time.Second)
+	v.SetDefault("providers.detector.rpm_limit", 30)
+	v.SetDefault("providers.detector.tpm_limit", 120000)
+
+	v.SetDefault("providers.embeddings.name", "openai-embeddings")
+	v.SetDefault("providers.embeddings.base_url", "https://api.openai.com")
+	v.SetDefault("providers.embeddings.timeout", 30*time.Second)
+	v.SetDefault("providers.embeddings.rpm_limit", 120)
+}
+
+func validateOptionalChatProvider(prefix string, provider ChatProviderConfig) error {
+	fields := map[string]string{
+		"api_key": provider.APIKey,
+		"model":   provider.Model,
+	}
+	return validateOptionalProvider(prefix, fields)
+}
+
+func validateOptionalEmbeddingProvider(prefix string, provider EmbeddingProviderConfig) error {
+	fields := map[string]string{
+		"api_key": provider.APIKey,
+		"model":   provider.Model,
+	}
+	return validateOptionalProvider(prefix, fields)
+}
+
+func validateOptionalProvider(prefix string, fields map[string]string) error {
+	enabled := false
+	missing := make([]string, 0, len(fields))
+	for name, value := range fields {
+		if strings.TrimSpace(value) != "" {
+			enabled = true
+			continue
+		}
+		missing = append(missing, prefix+"."+name)
+	}
+	if !enabled {
+		return nil
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("incomplete optional provider configuration: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }

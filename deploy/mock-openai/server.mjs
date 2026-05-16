@@ -62,6 +62,11 @@ function humanizeChineseRhythm(paragraph) {
 }
 
 const chineseRound1Patterns = [
+  [/人工智能生成文本在课程作业、技术报告和学术写作中越来越常见/g, '人工智能生成文本如今常见于课程作业、技术报告和学术写作'],
+  [/许多内容会出现明显的模板化痕迹/g, '不少内容仍会留下明显的模板化痕迹'],
+  [/为了让表达更自然/g, '为了让表达读起来更自然'],
+  [/对原文进行分段改写/g, '按段落改写原文'],
+  [/并且持续提供清晰的处理进度/g, '同时持续提供清晰的处理进度'],
   [/在当前([^，。；\n]{0,30}?)的大背景下，?/g, (_, topic) => `随着${topic.replace(/不断深入推进/g, '持续推进')}，`],
   [/在当前([^，。；\n]{0,30}?)背景下，?/g, (_, topic) => `随着${topic.replace(/不断深入推进/g, '持续推进')}，`],
   [/正在呈现出快速发展、持续演进以及多元融合的总体趋势/g, '正加快演进，也在和更多场景融合'],
@@ -123,12 +128,27 @@ const chineseRound2Patterns = [
   [/这一方向有明确的应用前景，也值得继续打磨/g, '这一方向有明确的应用空间，也值得继续完善'],
 ]
 
+const englishRound1Patterns = [
+  [/keep the original meaning intact while making the tone read more naturally/gi, 'keep the original meaning intact and make the tone read more naturally'],
+  [/It should process the document in sections, report progress clearly, and return a clean result without extra notes or markup\./gi, 'It should process the document in sections and report progress clearly. The returned result should stay clean, with no extra notes or markup.'],
+]
+
+const englishRound2Patterns = [
+  [/make the tone read more naturally/gi, 'make the tone feel more natural'],
+  [/The returned result should stay clean, with no extra notes or markup\./gi, 'The returned result should stay clean and avoid extra notes or markup.'],
+]
+
 function rewriteChinese(paragraph, round) {
   const patterns = round >= 2 ? chineseRound2Patterns : chineseRound1Patterns
   const rewritten = applyPatterns(normalizeChineseParagraph(paragraph), patterns)
   return (round >= 2 ? humanizeChineseRhythm(rewritten) : rewritten)
     .replace(/，。/g, '。')
     .trim()
+}
+
+function rewriteEnglish(paragraph, round) {
+  const patterns = round >= 2 ? englishRound2Patterns : englishRound1Patterns
+  return applyPatterns(paragraph.replace(/\s+/g, ' ').trim(), patterns)
 }
 
 function debugRewrite(round, input, output) {
@@ -161,10 +181,7 @@ function rewrite(text, round = 1) {
       }
 
       if (/[A-Za-z]/.test(paragraph)) {
-        return paragraph
-          .replace(/\s+/g, ' ')
-          .replace(/^(.{0,70}?[.!?])\s*/u, '$1 ')
-          .trim()
+        return rewriteEnglish(paragraph, round)
       }
 
       return rewriteChinese(paragraph, round)

@@ -26,6 +26,14 @@ redis:
 storage:
   root_dir: ./var/data
 
+scoring:
+  calibration_path: ./var/data/calibration/detector-state.json
+  calibration_min_pairs: 8
+  calibration_window: 128
+  detector_cache_ttl: 24h
+  semantic_threshold: 0.82
+  readability_max_score: 0.24
+
 providers:
   rewrite:
     name: openai-responses
@@ -58,3 +66,22 @@ providers:
     timeout: 90s
     rpm_limit: 60
     tpm_limit: 200000
+  detector:
+    name: openai-detector
+    base_url: https://api.openai.com
+    api_key: ${NATURALIZE_PROVIDERS_DETECTOR_API_KEY}
+    model: ${NATURALIZE_PROVIDERS_DETECTOR_MODEL}
+    organization: ""
+    project: ""
+    timeout: 60s
+    rpm_limit: 30
+    tpm_limit: 120000
+  embeddings:
+    name: openai-embeddings
+    base_url: https://api.openai.com
+    api_key: ${NATURALIZE_PROVIDERS_EMBEDDINGS_API_KEY}
+    model: ${NATURALIZE_PROVIDERS_EMBEDDINGS_MODEL}
+    organization: ""
+    project: ""
+    timeout: 30s
+    rpm_limit: 120

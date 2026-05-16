@@ -17,6 +17,7 @@ import (
 	"github.com/iwen-conf/Naturalize/internal/api"
 	apihandler "github.com/iwen-conf/Naturalize/internal/api/handler"
 	"github.com/iwen-conf/Naturalize/internal/domain"
+	"github.com/iwen-conf/Naturalize/internal/domain/scorer"
 	illm "github.com/iwen-conf/Naturalize/internal/infra/llm"
 	ipostgres "github.com/iwen-conf/Naturalize/internal/infra/postgres"
 	iredis "github.com/iwen-conf/Naturalize/internal/infra/redis"
@@ -116,13 +117,38 @@ func main() {
 	syntaxAgent := agent.NewSyntaxRebuilder(agentRegistry)
 	coordinator := agent.NewCoordinator(agentRegistry, lexicalAgent, syntaxAgent)
 	trackingPublisher := service.NewTrackingPublisher(progressPublisher, stateRepo)
+	detector := scorer.NewOpenAICompatibleDetector(chatProviderConfig(cfg.Providers.Detector))
+	detectorClient := detectorOrFallback(detector)
+	if detector != nil {
+		detectorClient = scorer.NewCachingDetector(
+			detector,
+			scorer.WithDetectorCacheTTL(cfg.Scoring.DetectorCacheTTL),
+		)
+	}
+	semantic := scorer.NewOpenAICompatibleEmbeddings(embeddingProviderConfig(cfg.Providers.Embeddings))
+	calibrator := scorer.NewCalibrator(
+		scorer.WithCalibrationStatePath(cfg.Scoring.CalibrationPath),
+		scorer.WithCalibrationMinSamples(cfg.Scoring.CalibrationMinPairs),
+		scorer.WithCalibrationWindow(cfg.Scoring.CalibrationWindow),
+		scorer.WithCalibrationDetector(detectorName(detectorClient)),
+	)
+	textScorer := scorer.NewComposite(
+		scorer.WithCalibrator(calibrator),
+		scorer.WithExternalDetector(detectorClient),
+	)
+	coordinator.SetScorer(textScorer)
+	coordinator.SetSemanticSimilarity(semantic)
+	gate := nodes.NewQualityGate(
+		nodes.WithSemanticSimilarity(semantic, cfg.Scoring.SemanticThreshold),
+		nodes.WithReadabilityMaxScore(cfg.Scoring.ReadabilityMaxScore),
+	)
 
 	exporter := nodes.NewExporter()
 	pipeline, err := workflow.NewPipeline(
 		builder,
 		nodes.NewParser(),
 		nodes.NewChunker(),
-		nodes.NewQualityGate(),
+		gate,
 		exporter,
 		providerChain,
 		coordinator,
@@ -134,6 +160,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("build pipeline: %v", err)
 	}
+	pipeline.SetScorer(textScorer)
 
 	svc := service.NewService(
 		sessionRepo,
@@ -149,6 +176,7 @@ func main() {
 		manager,
 		builder,
 	)
+	svc.SetScorer(textScorer)
 
 	agentSettingsService := service.NewAgentSettingsService(agentSettingsRepo, agentRegistry)
 
@@ -179,6 +207,48 @@ func main() {
 		log.Printf("shutdown: %v", err)
 	}
 	time.Sleep(200 * time.Millisecond)
+}
+
+func detectorOrFallback(detector scorer.ExternalDetector) scorer.ExternalDetector {
+	if detector != nil {
+		return detector
+	}
+	return scorer.ExternalFallback{}
+}
+
+func detectorName(detector scorer.ExternalDetector) string {
+	if detector == nil {
+		return ""
+	}
+	return detector.Name()
+}
+
+func chatProviderConfig(cfg config.ChatProviderConfig) domain.ProviderConfig {
+	return domain.ProviderConfig{
+		Name:         cfg.Name,
+		Mode:         domain.ProviderModeChat,
+		BaseURL:      cfg.BaseURL,
+		APIKey:       cfg.APIKey,
+		Model:        cfg.Model,
+		Organization: cfg.Organization,
+		Project:      cfg.Project,
+		Timeout:      cfg.Timeout,
+		RPMLimit:     cfg.RPMLimit,
+		TPMLimit:     cfg.TPMLimit,
+	}
+}
+
+func embeddingProviderConfig(cfg config.EmbeddingProviderConfig) domain.ProviderConfig {
+	return domain.ProviderConfig{
+		Name:         cfg.Name,
+		BaseURL:      cfg.BaseURL,
+		APIKey:       cfg.APIKey,
+		Model:        cfg.Model,
+		Organization: cfg.Organization,
+		Project:      cfg.Project,
+		Timeout:      cfg.Timeout,
+		RPMLimit:     cfg.RPMLimit,
+	}
 }
 
 func defaultAgentSettings(cfg config.Config) []domain.AgentSetting {
