@@ -1,0 +1,107 @@
+{
+  "summary": {
+    "total": 6,
+    "completed": 6,
+    "failed": 0,
+    "scoreBefore": 0.48984194493269434,
+    "scoreAfter": 0.49263931941600053,
+    "delta": -0.002797374483306192,
+    "bySource": {
+      "ai": {
+        "count": 6,
+        "scoreBefore": 0.48984194493269434,
+        "scoreAfter": 0.49263931941600053,
+        "delta": -0.002797374483306192
+      }
+    },
+    "detectors": [
+      "internal-calibrated"
+    ]
+  },
+  "results": [
+    {
+      "id": "cn-ai-001",
+      "source": "ai",
+      "domain": "academic",
+      "profile": "cn",
+      "sessionId": "cea71856-3705-484b-b4a4-6ed98e272b35",
+      "status": "completed",
+      "scoreBefore": 0.5665625638783683,
+      "scoreAfter": 0.5665625638783683,
+      "delta": 0,
+      "detector": "internal-calibrated",
+      "roundsUsed": 2,
+      "elapsedMs": 3024
+    },
+    {
+      "id": "cn-ai-002",
+      "source": "ai",
+      "domain": "technical",
+      "profile": "cn",
+      "sessionId": "06da5258-6a29-422a-ad8c-67398349b1fd",
+      "status": "completed",
+      "scoreBefore": 0.42704300608064233,
+      "scoreAfter": 0.429756810117343,
+      "delta": -0.0027138040367006844,
+      "detector": "internal-calibrated",
+      "roundsUsed": 2,
+      "elapsedMs": 6032
+    },
+    {
+      "id": "cn-ai-003",
+      "source": "ai",
+      "domain": "spoken",
+      "profile": "cn",
+      "sessionId": "230156d1-da54-4543-9f3d-3178c3877bfe",
+      "status": "completed",
+      "scoreBefore": 0.5221949587433643,
+      "scoreAfter": 0.5221949587433643,
+      "delta": 0,
+      "detector": "internal-calibrated",
+      "roundsUsed": 2,
+      "elapsedMs": 6029
+    },
+    {
+      "id": "cn-ai-004",
+      "source": "ai",
+      "domain": "academic",
+      "profile": "cn",
+      "sessionId": "074d950b-03cc-4248-acc7-d520138da512",
+      "status": "completed",
+      "scoreBefore": 0.41060872170289453,
+      "scoreAfter": 0.36010540074917585,
+      "delta": 0.05050332095371868,
+      "detector": "internal-calibrated",
+      "roundsUsed": 2,
+      "elapsedMs": 6030
+    },
+    {
+      "id": "cn-ai-005",
+      "source": "ai",
+      "domain": "technical",
+      "profile": "cn",
+      "sessionId": "c257ecc4-340f-4621-ae58-cab19d617c51",
+      "status": "completed",
+      "scoreBefore": 0.6147917208025621,
+      "scoreAfter": 0.6147917208025621,
+      "delta": 0,
+      "detector": "internal-calibrated",
+      "roundsUsed": 2,
+      "elapsedMs": 6022
+    },
+    {
+      "id": "cn-ai-006",
+      "source": "ai",
+      "domain": "spoken",
+      "profile": "cn",
+      "sessionId": "384fa6ab-fb73-44d8-9746-15fb17c129cd",
+      "status": "completed",
+      "scoreBefore": 0.39785069838833464,
+      "scoreAfter": 0.4624244622051897,
+      "delta": -0.06457376381685503,
+      "detector": "internal-calibrated",
+      "roundsUsed": 2,
+      "elapsedMs": 4588
+    }
+  ]
+}

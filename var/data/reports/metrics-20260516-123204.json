@@ -1,0 +1,96 @@
+{
+  "summary": {
+    "total": 6,
+    "completed": 0,
+    "failed": 6,
+    "scoreBefore": null,
+    "scoreAfter": null,
+    "delta": null,
+    "bySource": {},
+    "detectors": []
+  },
+  "results": [
+    {
+      "id": "cn-ai-001",
+      "source": "ai",
+      "domain": "academic",
+      "profile": "cn",
+      "sessionId": "1f2b794f-6edf-426c-9e7e-e141f1a4f43d",
+      "status": "timeout",
+      "scoreBefore": null,
+      "scoreAfter": null,
+      "delta": null,
+      "detector": "",
+      "roundsUsed": 0,
+      "elapsedMs": 120443,
+      "error": "timeout after 120s"
+    },
+    {
+      "id": "cn-ai-002",
+      "source": "ai",
+      "domain": "technical",
+      "profile": "cn",
+      "sessionId": "84cbb473-0b0c-47dd-8263-5b4bc3bd3e41",
+      "status": "timeout",
+      "scoreBefore": null,
+      "scoreAfter": null,
+      "delta": null,
+      "detector": "",
+      "roundsUsed": 0,
+      "elapsedMs": 120362,
+      "error": "timeout after 120s"
+    },
+    {
+      "id": "cn-ai-003",
+      "source": "ai",
+      "domain": "spoken",
+      "profile": "cn",
+      "status": "error",
+      "error": "fetch failed",
+      "scoreBefore": null,
+      "scoreAfter": null,
+      "delta": null,
+      "detector": "",
+      "roundsUsed": 0
+    },
+    {
+      "id": "cn-ai-004",
+      "source": "ai",
+      "domain": "academic",
+      "profile": "cn",
+      "status": "error",
+      "error": "fetch failed",
+      "scoreBefore": null,
+      "scoreAfter": null,
+      "delta": null,
+      "detector": "",
+      "roundsUsed": 0
+    },
+    {
+      "id": "cn-ai-005",
+      "source": "ai",
+      "domain": "technical",
+      "profile": "cn",
+      "status": "error",
+      "error": "fetch failed",
+      "scoreBefore": null,
+      "scoreAfter": null,
+      "delta": null,
+      "detector": "",
+      "roundsUsed": 0
+    },
+    {
+      "id": "cn-ai-006",
+      "source": "ai",
+      "domain": "spoken",
+      "profile": "cn",
+      "status": "error",
+      "error": "fetch failed",
+      "scoreBefore": null,
+      "scoreAfter": null,
+      "delta": null,
+      "detector": "",
+      "roundsUsed": 0
+    }
+  ]
+}
