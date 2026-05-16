@@ -25,16 +25,19 @@ type ParagraphMapping struct {
 }
 
 type Chunk struct {
-	ID             string           `json:"id"`
-	ParagraphIndex int              `json:"paragraph_index"`
-	ChunkIndex     int              `json:"chunk_index"`
-	Text           string           `json:"text"`
-	MetricValue    int              `json:"metric_value"`
-	Output         string           `json:"output,omitempty"`
-	Status         ChunkStatus      `json:"status,omitempty"`
-	Checks         []CheckResult    `json:"checks,omitempty"`
-	AIRate         float64          `json:"ai_rate,omitempty"`
-	State          ChunkReviewState `json:"state,omitempty"`
+	ID             string             `json:"id"`
+	ParagraphIndex int                `json:"paragraph_index"`
+	ChunkIndex     int                `json:"chunk_index"`
+	Text           string             `json:"text"`
+	MetricValue    int                `json:"metric_value"`
+	Output         string             `json:"output,omitempty"`
+	Status         ChunkStatus        `json:"status,omitempty"`
+	Checks         []CheckResult      `json:"checks,omitempty"`
+	AIRate         float64            `json:"ai_rate,omitempty"`
+	Score          *AIScore           `json:"score,omitempty"`
+	OutputScore    *AIScore           `json:"output_score,omitempty"`
+	Sentences      []SentenceDecision `json:"sentences,omitempty"`
+	State          ChunkReviewState   `json:"state,omitempty"`
 }
 
 type Manifest struct {
@@ -69,18 +72,21 @@ const (
 )
 
 type ChunkDiff struct {
-	ID             string           `json:"id"`
-	ParagraphIndex int              `json:"paragraphIndex"`
-	ChunkIndex     int              `json:"chunkIndex"`
-	Input          string           `json:"input"`
-	Output         string           `json:"output"`
-	Status         ChunkStatus      `json:"status"`
-	CharDelta      int              `json:"charDelta"`
-	AIRate         float64          `json:"aiRate"`
-	OutputAIRate   float64          `json:"outputAiRate"`
-	Detector       string           `json:"detector"`
-	State          ChunkReviewState `json:"state"`
-	Checks         []CheckResult    `json:"checks"`
+	ID             string             `json:"id"`
+	ParagraphIndex int                `json:"paragraphIndex"`
+	ChunkIndex     int                `json:"chunkIndex"`
+	Input          string             `json:"input"`
+	Output         string             `json:"output"`
+	Status         ChunkStatus        `json:"status"`
+	CharDelta      int                `json:"charDelta"`
+	AIRate         float64            `json:"aiRate"`
+	OutputAIRate   float64            `json:"outputAiRate"`
+	Detector       string             `json:"detector"`
+	Score          *AIScore           `json:"score,omitempty"`
+	OutputScore    *AIScore           `json:"outputScore,omitempty"`
+	Sentences      []SentenceDecision `json:"sentences,omitempty"`
+	State          ChunkReviewState   `json:"state"`
+	Checks         []CheckResult      `json:"checks"`
 }
 
 type RoundDiff struct {

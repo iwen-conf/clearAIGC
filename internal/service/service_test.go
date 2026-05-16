@@ -57,6 +57,30 @@ func (r *fakeSessionRepository) List(_ context.Context, filter domain.SessionLis
 	return items, total, nil
 }
 
+func (r *fakeSessionRepository) ListExpired(_ context.Context, cutoff time.Time, statuses []domain.SessionStatus) ([]domain.Session, error) {
+	statusSet := make(map[domain.SessionStatus]struct{}, len(statuses))
+	for _, status := range statuses {
+		statusSet[status] = struct{}{}
+	}
+
+	candidates := append([]domain.Session(nil), r.sessions...)
+	if r.session != nil {
+		candidates = append(candidates, *r.session)
+	}
+
+	expired := make([]domain.Session, 0, len(candidates))
+	for _, session := range candidates {
+		if _, ok := statusSet[session.Status]; !ok {
+			continue
+		}
+		if !session.UpdatedAt.Before(cutoff) {
+			continue
+		}
+		expired = append(expired, session)
+	}
+	return expired, nil
+}
+
 func (r *fakeSessionRepository) Delete(_ context.Context, sessionID uuid.UUID) error {
 	r.deletedIDs = append(r.deletedIDs, sessionID)
 	if r.deleteErr != nil {
@@ -303,6 +327,57 @@ func TestReadDiffBuildsChunkComparison(t *testing.T) {
 	if got := diff.Chunks[0].State; got != domain.ChunkReviewPending {
 		t.Fatalf("chunk state mismatch: %q", got)
 	}
+	if diff.Chunks[0].Score != nil || diff.Chunks[0].OutputScore != nil {
+		t.Fatalf("expected nil score fields when manifest did not persist them: %+v", diff.Chunks[0])
+	}
+}
+
+func TestReadDiffCarriesScoreAndSentenceDecisions(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(t, &domain.Manifest{
+		RoundID: uuid.New(),
+		Chunks: []domain.Chunk{
+			{
+				ID:             "p0_c0",
+				ParagraphIndex: 0,
+				ChunkIndex:     0,
+				Text:           "原句。",
+				Output:         "改写句。",
+				Status:         domain.ChunkPassed,
+				Score: &domain.AIScore{
+					Total: 0.62,
+					Calibrated: &domain.CalibratedScore{
+						Detector:    "internal-calibrated",
+						Score:       0.58,
+						Correlation: 0.62,
+					},
+				},
+				OutputScore: &domain.AIScore{
+					Total: 0.31,
+					Calibrated: &domain.CalibratedScore{
+						Detector:    "internal-calibrated",
+						Score:       0.28,
+						Correlation: 0.62,
+					},
+				},
+				Sentences: []domain.SentenceDecision{
+					{Index: 0, Input: "原句。", Output: "改写句。", Accepted: true, Reason: "selected"},
+				},
+			},
+		},
+	})
+
+	diff, err := service.ReadDiff(context.Background(), service.rounds.(*fakeRoundRepository).round.SessionID, 1)
+	if err != nil {
+		t.Fatalf("ReadDiff returned error: %v", err)
+	}
+	if diff.Chunks[0].Score == nil || diff.Chunks[0].OutputScore == nil {
+		t.Fatalf("expected score fields to be returned: %+v", diff.Chunks[0])
+	}
+	if len(diff.Chunks[0].Sentences) != 1 || !diff.Chunks[0].Sentences[0].Accepted {
+		t.Fatalf("expected sentence decisions in diff: %+v", diff.Chunks[0].Sentences)
+	}
 }
 
 func TestUpdateCardStatePersistsManifest(t *testing.T) {
@@ -440,6 +515,9 @@ func TestReadStateReturnsPersistedProgressAndTimeline(t *testing.T) {
 	if state.Session == nil || state.Session.ID != sessionID {
 		t.Fatalf("session mismatch: %+v", state.Session)
 	}
+	if state.Session.TotalRounds != 2 || state.Session.CanStartNext {
+		t.Fatalf("session round plan mismatch: %+v", state.Session)
+	}
 	if state.Progress == nil || state.Progress.Phase != "chunk-complete" {
 		t.Fatalf("progress mismatch: %+v", state.Progress)
 	}
@@ -451,6 +529,55 @@ func TestReadStateReturnsPersistedProgressAndTimeline(t *testing.T) {
 	}
 	if state.Comparison == nil || len(state.Comparison.Chunks) != 1 {
 		t.Fatalf("comparison mismatch: %+v", state.Comparison)
+	}
+}
+
+func TestRecordRoundStartMarksSecondRoundAsOptionalForDualPassChinese(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(t, &domain.Manifest{
+		RoundID: uuid.New(),
+		Chunks:  []domain.Chunk{{ID: "p0_c0", Text: "Original", Output: "Rewritten"}},
+	})
+	sessionID := service.rounds.(*fakeRoundRepository).round.SessionID
+	stateRepo := service.states.(*fakeStateRepository)
+
+	service.recordRoundStart(context.Background(), sessionID, 1, "cn")
+
+	if stateRepo.progress == nil {
+		t.Fatal("expected progress snapshot to be recorded")
+	}
+	if got := stateRepo.progress.Phase; got != "queued" {
+		t.Fatalf("progress phase mismatch: %q", got)
+	}
+	if len(stateRepo.timeline) != 1 {
+		t.Fatalf("timeline entry count mismatch: %d", len(stateRepo.timeline))
+	}
+	if got := stateRepo.timeline[0].Detail; got != "第一轮润色已开始。第二轮精修为可选。" {
+		t.Fatalf("timeline detail mismatch: %q", got)
+	}
+}
+
+func TestRecordRoundStartUsesRefinementCopyForSecondChineseRound(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(t, &domain.Manifest{
+		RoundID: uuid.New(),
+		Chunks:  []domain.Chunk{{ID: "p0_c0", Text: "Original", Output: "Rewritten"}},
+	})
+	sessionID := service.rounds.(*fakeRoundRepository).round.SessionID
+	stateRepo := service.states.(*fakeStateRepository)
+
+	service.recordRoundStart(context.Background(), sessionID, 2, "cn")
+
+	if len(stateRepo.timeline) != 1 {
+		t.Fatalf("timeline entry count mismatch: %d", len(stateRepo.timeline))
+	}
+	if got := stateRepo.timeline[0].Title; got != "第 2 轮已开始" {
+		t.Fatalf("timeline title mismatch: %q", got)
+	}
+	if got := stateRepo.timeline[0].Detail; got != "第二轮精修已开始。" {
+		t.Fatalf("timeline detail mismatch: %q", got)
 	}
 }
 
@@ -533,6 +660,9 @@ func TestListSessionsMetrics(t *testing.T) {
 	if items[0].Metrics.CompletedRounds != 1 || items[0].Metrics.TotalRounds != 2 || items[0].Metrics.TotalTokens != 150 {
 		t.Fatalf("metrics mismatch: %+v", items[0].Metrics)
 	}
+	if items[0].Metrics.CanStartNext || items[0].Metrics.NextRound != 0 {
+		t.Fatalf("next round metrics mismatch: %+v", items[0].Metrics)
+	}
 	if !items[0].Metrics.LastActivityAt.Equal(now.Add(-2 * time.Minute)) {
 		t.Fatalf("last activity mismatch: %s", items[0].Metrics.LastActivityAt)
 	}
@@ -598,6 +728,65 @@ func TestReadHistoryReturnsAggregatedRoundsAndTimeline(t *testing.T) {
 	}
 	if summary.DurationSeconds <= 0 {
 		t.Fatalf("duration mismatch: %d", summary.DurationSeconds)
+	}
+}
+
+func TestResolveRoundPlanStopsChineseFollowupAfterLowRiskCompletion(t *testing.T) {
+	t.Parallel()
+
+	service := newTestServiceWithOutput(t, &domain.Manifest{
+		RoundID: uuid.New(),
+		Chunks: []domain.Chunk{
+			{
+				ID:             "p0_c0",
+				ParagraphIndex: 0,
+				ChunkIndex:     0,
+				Text:           "先记房间号。随后，Mina把封条编号、取样时间和交接人写进纸质记录，再让Chen复核签名。好。19:14 再补一条备注。",
+				Output:         "先记房间号。随后，Mina把封条编号、取样时间和交接人写进纸质记录，再让Chen复核签名。好。19:14 再补一条备注。",
+				Status:         domain.ChunkPassed,
+			},
+		},
+	}, "先记房间号。随后，Mina把封条编号、取样时间和交接人写进纸质记录，再让Chen复核签名。好。19:14 再补一条备注。")
+
+	sessionID := service.rounds.(*fakeRoundRepository).round.SessionID
+	state, err := service.ReadState(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("ReadState returned error: %v", err)
+	}
+
+	if state.Session.TotalRounds != 1 {
+		t.Fatalf("expected total rounds to collapse to 1, got %d", state.Session.TotalRounds)
+	}
+	if state.Session.CanStartNext {
+		t.Fatal("expected next round to be disabled after low-risk completion")
+	}
+	if state.Session.NextRound != 0 {
+		t.Fatalf("expected next round to be cleared, got %d", state.Session.NextRound)
+	}
+}
+
+func TestStartNextRoundRejectsWhenResolvedPlanDisablesFollowup(t *testing.T) {
+	t.Parallel()
+
+	service := newTestServiceWithOutput(t, &domain.Manifest{
+		RoundID: uuid.New(),
+		Chunks: []domain.Chunk{
+			{
+				ID:             "p0_c0",
+				ParagraphIndex: 0,
+				ChunkIndex:     0,
+				Text:           "先记房间号。随后，Mina把封条编号、取样时间和交接人写进纸质记录，再让Chen复核签名。好。19:14 再补一条备注。",
+				Output:         "先记房间号。随后，Mina把封条编号、取样时间和交接人写进纸质记录，再让Chen复核签名。好。19:14 再补一条备注。",
+				Status:         domain.ChunkPassed,
+			},
+		},
+	}, "先记房间号。随后，Mina把封条编号、取样时间和交接人写进纸质记录，再让Chen复核签名。好。19:14 再补一条备注。")
+	service.manager = NewExecutionManager()
+
+	sessionID := service.rounds.(*fakeRoundRepository).round.SessionID
+	_, err := service.StartNextRound(context.Background(), sessionID, 0)
+	if !errors.Is(err, ErrAllRoundsCompleted) {
+		t.Fatalf("expected all-rounds-completed error, got %v", err)
 	}
 }
 
@@ -755,6 +944,17 @@ func newTestService(t *testing.T, manifest *domain.Manifest) *Service {
 		exporter:  &fakeExporter{},
 		layout:    layout,
 	}
+}
+
+func newTestServiceWithOutput(t *testing.T, manifest *domain.Manifest, output string) *Service {
+	t.Helper()
+
+	service := newTestService(t, manifest)
+	round := service.rounds.(*fakeRoundRepository).round
+	if err := os.WriteFile(round.OutputPath, []byte(output), 0o644); err != nil {
+		t.Fatalf("write round output: %v", err)
+	}
+	return service
 }
 
 func cloneManifest(manifest *domain.Manifest) *domain.Manifest {

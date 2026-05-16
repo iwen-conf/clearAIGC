@@ -27,7 +27,7 @@ var DisallowedPatterns = []string{
 var OutputContractText = `You must return only the rewritten passage.
 Do not add headings, notes, preambles, markdown fences, bullet points, or explanations.
 Do not add new facts, references, conclusions, or examples.
-Preserve the original paragraph order, numbering, terminology, and factual meaning.`
+Preserve the original paragraph order, numbering, list structure, terminology, and factual meaning.`
 
 var Profiles = map[string]PromptProfile{
 	"cn": {

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/google/uuid"
@@ -11,6 +12,7 @@ type SessionRepository interface {
 	Create(ctx context.Context, session *Session) error
 	Get(ctx context.Context, sessionID uuid.UUID) (*Session, error)
 	List(ctx context.Context, filter SessionListFilter) ([]Session, int, error)
+	ListExpired(ctx context.Context, cutoff time.Time, statuses []SessionStatus) ([]Session, error)
 	Delete(ctx context.Context, sessionID uuid.UUID) error
 	UpdateStatus(ctx context.Context, sessionID uuid.UUID, status SessionStatus) error
 	AcquireLock(ctx context.Context, sessionID uuid.UUID) (func(), error)

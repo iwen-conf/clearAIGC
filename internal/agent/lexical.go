@@ -18,6 +18,8 @@ You are a Lexical Analyst operating as a headless microservice. Your task is to 
 3. CRITICAL BOUNDARY: DO NOT add, delete, or move any commas, periods, or clauses. Maintain the exact original structure of the sentence.
 4. Ignore words wrapped in __TERM__ markers.
 5. If the text is Chinese, strictly AVOID typical AI transition phrases and abstract words like "在当前背景下", "综合来看", "进一步来说", "意义", "价值", "维度", "层面", "机制", "路径", etc.
+6. Treat the supplied round objective, target risk score, and heuristic-risk patterns as hard guidance.
+7. Never introduce any item from the supplied forbidden phrase list. Remove listed risky expressions before making stylistic substitutions.
 
 [Output Format]
 You must output a precise Diff-Patch array in JSON format. Do not return the full text.
@@ -45,13 +47,13 @@ type lexicalResponse struct {
 
 // Apply returns the rewritten text after applying lexical patches and the total tokens consumed.
 // When the agent is not configured, it returns the original text unchanged and zero tokens.
-func (m *LexicalMutator) Apply(ctx context.Context, requestID, text string) (string, int, error) {
+func (m *LexicalMutator) Apply(ctx context.Context, requestID string, guidance RewriteGuidance) (string, int, error) {
 	client, _, ok := m.registry.Client(domain.AgentLexicalMutator)
 	if !ok {
-		return text, 0, nil
+		return guidance.Text, 0, nil
 	}
 
-	prompt := fmt.Sprintf("%s\n\n[INPUT TEXT]\n%s", lexicalSystemPrompt, text)
+	prompt := formatRewritePrompt(lexicalSystemPrompt, guidance)
 	result, err := client.Complete(ctx, domain.LLMRequest{
 		RequestID: requestID + "-lexical",
 		Prompt:    prompt,
@@ -66,7 +68,7 @@ func (m *LexicalMutator) Apply(ctx context.Context, requestID, text string) (str
 		return "", result.InputTokens + result.OutputTokens, fmt.Errorf("parse lexical patches: %w", err)
 	}
 
-	rewritten := text
+	rewritten := guidance.Text
 	for _, patch := range parsed.Patches {
 		if patch.Original == "" || patch.Replacement == "" {
 			continue

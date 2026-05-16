@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-const AIRateDetectorName = "启发式规则"
+const AIRateDetectorName = "内部启发式风险评估"
 
 var aiStrongPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`在当前[^。；\n]{0,24}背景下`),
@@ -209,4 +209,74 @@ func IdentifyAIFeatures(text string) []string {
 	}
 
 	return features
+}
+
+func ForbiddenAIPhrases(text string) []string {
+	text = strings.TrimSpace(normalizeAIRateText(text))
+	if text == "" {
+		return nil
+	}
+
+	includeChinese := containsHan(text)
+	includeEnglish := containsASCIILetter(text)
+
+	phrases := make([]string, 0, len(aiTransitionPhrases)+len(aiAbstractTerms)+4)
+	seen := map[string]struct{}{}
+	add := func(item string) {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return
+		}
+		key := item
+		if isASCIIPhrase(item) {
+			key = strings.ToLower(item)
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		phrases = append(phrases, item)
+	}
+
+	for _, pattern := range aiStrongPatterns {
+		if match := strings.TrimSpace(pattern.FindString(text)); match != "" {
+			add(match)
+		}
+	}
+
+	for _, phrase := range aiTransitionPhrases {
+		switch {
+		case isASCIIPhrase(phrase) && includeEnglish:
+			add(phrase)
+		case !isASCIIPhrase(phrase) && includeChinese:
+			add(phrase)
+		}
+	}
+
+	if includeChinese {
+		for _, term := range aiAbstractTerms {
+			add(term)
+		}
+		add("更加")
+	}
+
+	return phrases
+}
+
+func containsHan(text string) bool {
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsASCIILetter(text string) bool {
+	for _, r := range text {
+		if ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') {
+			return true
+		}
+	}
+	return false
 }

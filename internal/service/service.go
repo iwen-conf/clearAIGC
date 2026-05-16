@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/iwen-conf/Naturalize/internal/domain"
+	"github.com/iwen-conf/Naturalize/internal/domain/scorer"
 	illm "github.com/iwen-conf/Naturalize/internal/infra/llm"
 	ipostgres "github.com/iwen-conf/Naturalize/internal/infra/postgres"
 	"github.com/iwen-conf/Naturalize/internal/workflow"
@@ -40,6 +41,7 @@ type Service struct {
 	layout      *storage.Layout
 	manager     *ExecutionManager
 	builder     *workflow.PromptBuilder
+	scorer      domain.AIScorer
 }
 
 type CreateSessionInput struct {
@@ -76,7 +78,21 @@ func NewService(
 		layout:      layout,
 		manager:     manager,
 		builder:     builder,
+		scorer:      scorer.NewComposite(),
 	}
+}
+
+func (s *Service) SetScorer(textScorer domain.AIScorer) {
+	if textScorer != nil {
+		s.scorer = textScorer
+	}
+}
+
+func (s *Service) textScorer() domain.AIScorer {
+	if s != nil && s.scorer != nil {
+		return s.scorer
+	}
+	return scorer.NewComposite()
 }
 
 func (s *Service) CreateSession(ctx context.Context, input CreateSessionInput) (*domain.Session, error) {
@@ -134,6 +150,7 @@ func (s *Service) GetSession(ctx context.Context, sessionID uuid.UUID) (*domain.
 		}
 		return nil, err
 	}
+	s.decorateSessionRoundPlan(ctx, session)
 	return session, nil
 }
 
@@ -161,10 +178,11 @@ func (s *Service) ListSessions(ctx context.Context, filter domain.SessionListFil
 		session := sessions[index]
 		progress := progressBySession[session.ID]
 		copySession := session
+		s.decorateSessionRoundPlan(ctx, &copySession)
 		items = append(items, domain.SessionListItem{
 			Session:  &copySession,
 			Progress: progress,
-			Metrics:  buildSessionListMetrics(copySession, progress),
+			Metrics:  s.buildSessionListMetrics(ctx, copySession, progress),
 		})
 	}
 
@@ -172,8 +190,20 @@ func (s *Service) ListSessions(ctx context.Context, filter domain.SessionListFil
 }
 
 func (s *Service) DeleteSession(ctx context.Context, sessionID uuid.UUID) error {
+	var checkpointIDs []string
+	if session, err := s.sessions.Get(ctx, sessionID); err == nil {
+		checkpointIDs = collectCheckpointIDs(session.Rounds)
+	} else if !errors.Is(err, ipostgres.ErrNotFound) {
+		return err
+	}
 	if s.states != nil {
 		_ = s.states.DeleteForSession(ctx, sessionID)
+	}
+	if s.checkpoints != nil {
+		for _, checkpointID := range checkpointIDs {
+			_ = s.checkpoints.Delete(ctx, checkpointID)
+			_ = s.checkpoints.DeleteJSON(ctx, checkpointID)
+		}
 	}
 	if err := s.sessions.Delete(ctx, sessionID); err != nil {
 		if errors.Is(err, ipostgres.ErrNotFound) {
@@ -204,7 +234,8 @@ func (s *Service) StartNextRound(ctx context.Context, sessionID uuid.UUID, chunk
 
 	profile := domain.Profiles[session.PromptProfile]
 	nextRound := len(session.Rounds) + 1
-	if nextRound > profile.MaxRounds {
+	totalRounds, _, canStartNext := s.resolveRoundPlan(ctx, session)
+	if !canStartNext || nextRound > totalRounds || nextRound > profile.MaxRounds {
 		return nil, ErrAllRoundsCompleted
 	}
 
@@ -246,7 +277,7 @@ func (s *Service) StartNextRound(ctx context.Context, sessionID uuid.UUID, chunk
 	}
 
 	session.Rounds = append(session.Rounds, *round)
-	s.recordRoundStart(ctx, session.ID, round.Number)
+	s.recordRoundStart(ctx, session.ID, round.Number, session.PromptProfile)
 	s.manager.Register(session.ID, round.ID)
 	go s.runRound(context.Background(), session, round)
 
@@ -367,6 +398,7 @@ func (s *Service) ReadState(ctx context.Context, sessionID uuid.UUID) (*domain.S
 	if err != nil {
 		return nil, err
 	}
+	s.decorateSessionRoundPlan(ctx, session)
 
 	state := &domain.SessionState{
 		Session:  session,
@@ -416,10 +448,11 @@ func (s *Service) ReadHistory(ctx context.Context, sessionID uuid.UUID) (*domain
 	if err != nil {
 		return nil, err
 	}
+	s.decorateSessionRoundPlan(ctx, session)
 
 	history := &domain.SessionHistory{
 		Session:  session,
-		Metrics:  buildSessionListMetrics(*session, nil),
+		Metrics:  s.buildSessionListMetrics(ctx, *session, nil),
 		Rounds:   make([]domain.RoundHistoryEntry, 0, len(session.Rounds)),
 		Timeline: []domain.SessionTimelineEntry{},
 	}
@@ -428,7 +461,7 @@ func (s *Service) ReadHistory(ctx context.Context, sessionID uuid.UUID) (*domain
 		progress, progressErr := s.states.GetProgress(ctx, sessionID)
 		if progressErr == nil {
 			history.Progress = progress
-			history.Metrics = buildSessionListMetrics(*session, progress)
+			history.Metrics = s.buildSessionListMetrics(ctx, *session, progress)
 		} else if !errors.Is(progressErr, ipostgres.ErrNotFound) {
 			return nil, progressErr
 		}
@@ -451,22 +484,17 @@ func (s *Service) ReadHistory(ctx context.Context, sessionID uuid.UUID) (*domain
 		manifest, manifestErr := s.manifests.GetByRoundID(ctx, round.ID)
 		switch {
 		case manifestErr == nil:
-			summary.ChunkCount = len(manifest.Chunks)
-			for _, chunk := range manifest.Chunks {
-				switch chunk.Status {
-				case domain.ChunkRecovered:
-					summary.RecoveredChunks++
-				case domain.ChunkFailed:
-					summary.FailedChunks++
-				default:
-					summary.PassedChunks++
-				}
-			}
+			normalizeManifest(manifest)
+			applyManifestSummary(&summary, manifest)
 		case errors.Is(manifestErr, ipostgres.ErrNotFound):
 		default:
 			return nil, manifestErr
 		}
 
+		mergeLocalMetrics(&history.LocalMetrics, summary.LocalMetrics)
+		if summary.QualityVerdict.Verdict != "" {
+			history.QualityVerdict = summary.QualityVerdict
+		}
 		copyRound := round
 		history.Rounds = append(history.Rounds, domain.RoundHistoryEntry{
 			Round:   &copyRound,
@@ -518,6 +546,33 @@ func (s *Service) ApplyAllCards(ctx context.Context, sessionID uuid.UUID, roundN
 	}
 
 	return buildChunkDiffs(manifest.Chunks), updated, nil
+}
+
+func (s *Service) CleanupExpiredSessions(ctx context.Context, retentionDays int) (int, error) {
+	if retentionDays <= 0 {
+		return 0, ErrInvalidRequest
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+	sessions, err := s.sessions.ListExpired(ctx, cutoff, []domain.SessionStatus{
+		domain.SessionCompleted,
+		domain.SessionFailed,
+		domain.SessionPaused,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	deleted := 0
+	for _, session := range sessions {
+		if session.Status == domain.SessionProcessing {
+			continue
+		}
+		if err := s.DeleteSession(ctx, session.ID); err != nil {
+			return deleted, err
+		}
+		deleted++
+	}
+	return deleted, nil
 }
 
 func (s *Service) Export(ctx context.Context, sessionID uuid.UUID, roundNumber int, format domain.DocumentFormat, selection string) (string, error) {
@@ -667,6 +722,11 @@ func (s *Service) runRound(ctx context.Context, session *domain.Session, round *
 	round.RecoveryJustification = result.RecoveryJustification
 	score := result.ScoreTotal
 	round.ScoreTotal = &score
+	if result.StopAfterRound && session.PromptProfile == "cn" {
+		session.TotalRounds = round.Number
+		session.NextRound = 0
+		session.CanStartNext = false
+	}
 
 	replaced := false
 	for i := range session.Rounds {
@@ -719,7 +779,7 @@ func latestCompletedRound(session *domain.Session) *domain.Round {
 	return latest
 }
 
-func (s *Service) recordRoundStart(ctx context.Context, sessionID uuid.UUID, roundNumber int) {
+func (s *Service) recordRoundStart(ctx context.Context, sessionID uuid.UUID, roundNumber int, promptProfile string) {
 	if s.states == nil {
 		return
 	}
@@ -732,9 +792,15 @@ func (s *Service) recordRoundStart(ctx context.Context, sessionID uuid.UUID, rou
 
 	title := "文档已提交"
 	detail := "第一轮润色已开始。"
+	if promptProfile == "cn" && roundNumber == 1 {
+		detail = "第一轮润色已开始。第二轮精修为可选。"
+	}
 	if roundNumber > 1 {
 		title = fmt.Sprintf("第 %d 轮已开始", roundNumber)
 		detail = fmt.Sprintf("第 %d 轮处理已开始。", roundNumber)
+		if promptProfile == "cn" && roundNumber == 2 {
+			detail = "第二轮精修已开始。"
+		}
 	}
 	_ = s.states.AppendTimeline(ctx, &domain.SessionTimelineEntry{
 		SessionID: sessionID,
@@ -774,9 +840,12 @@ func (s *Service) recordRoundResume(ctx context.Context, sessionID uuid.UUID, ro
 	})
 }
 
-func buildSessionListMetrics(session domain.Session, progress *domain.SessionProgressSnapshot) domain.SessionListMetrics {
+func (s *Service) buildSessionListMetrics(ctx context.Context, session domain.Session, progress *domain.SessionProgressSnapshot) domain.SessionListMetrics {
+	totalRounds, nextRound, canStartNext := s.resolveRoundPlan(ctx, &session)
 	metrics := domain.SessionListMetrics{
-		TotalRounds:    totalRoundsForProfile(session.PromptProfile),
+		TotalRounds:    totalRounds,
+		NextRound:      nextRound,
+		CanStartNext:   canStartNext,
 		LastActivityAt: session.UpdatedAt,
 	}
 
@@ -800,18 +869,270 @@ func buildSessionListMetrics(session domain.Session, progress *domain.SessionPro
 func buildRoundHistorySummary(round domain.Round) domain.RoundHistorySummary {
 	summary := domain.RoundHistorySummary{
 		ScoreTotal: round.ScoreTotal,
+		LocalMetrics: domain.LocalMetrics{
+			TotalTokens:      round.TotalTokens,
+			LastFailureReason: strings.TrimSpace(round.RecoveryJustification),
+		},
 	}
 	if round.StartedAt != nil && round.CompletedAt != nil && round.CompletedAt.After(*round.StartedAt) {
 		summary.DurationSeconds = int64(round.CompletedAt.Sub(*round.StartedAt).Seconds())
+		summary.LocalMetrics.DurationSeconds = summary.DurationSeconds
 	}
+	summary.QualityVerdict = defaultQualityVerdict(round.Status)
 	return summary
 }
 
-func totalRoundsForProfile(profile string) int {
-	if promptProfile, ok := domain.Profiles[profile]; ok && promptProfile.MaxRounds > 0 {
-		return promptProfile.MaxRounds
+func applyManifestSummary(summary *domain.RoundHistorySummary, manifest *domain.Manifest) {
+	if summary == nil || manifest == nil {
+		return
 	}
-	return 1
+	summary.ChunkCount = len(manifest.Chunks)
+	scoreBefore := averageScore(manifest.Chunks, func(chunk domain.Chunk) *domain.AIScore { return chunk.Score })
+	scoreAfter := averageScore(manifest.Chunks, func(chunk domain.Chunk) *domain.AIScore { return chunk.OutputScore })
+	targetScore := averageTargetScore(manifest.Chunks)
+	failedChecks := make([]domain.CheckType, 0)
+	reasons := make([]string, 0)
+	externalStatus := domain.ExternalDetectorUnavailable
+	detector := ""
+
+	for _, chunk := range manifest.Chunks {
+		switch chunk.Status {
+		case domain.ChunkRecovered:
+			summary.RecoveredChunks++
+		case domain.ChunkFailed:
+			summary.FailedChunks++
+		default:
+			summary.PassedChunks++
+		}
+		switch normalizeChunkReviewState(chunk.State) {
+		case domain.ChunkReviewAccepted:
+			summary.LocalMetrics.AcceptedCards++
+		case domain.ChunkReviewRejected:
+			summary.LocalMetrics.RejectedCards++
+		default:
+			summary.LocalMetrics.PendingCards++
+		}
+		if chunk.OutputScore != nil {
+			if detector == "" {
+				detector = scoreDetectorName(chunk.OutputScore)
+			}
+			status := scoreExternalStatus(chunk.OutputScore)
+			if status == domain.ExternalDetectorFailed {
+				externalStatus = status
+			} else if status == domain.ExternalDetectorPassed && externalStatus != domain.ExternalDetectorFailed {
+				externalStatus = status
+			}
+		}
+		for _, check := range chunk.Checks {
+			if check.Passed {
+				continue
+			}
+			failedChecks = appendUniqueCheck(failedChecks, check.Type)
+			if strings.TrimSpace(check.Reason) != "" {
+				reasons = append(reasons, check.Reason)
+			}
+		}
+	}
+
+	reviewedCards := summary.LocalMetrics.AcceptedCards + summary.LocalMetrics.RejectedCards
+	if reviewedCards > 0 {
+		summary.LocalMetrics.AcceptanceRate = float64(summary.LocalMetrics.AcceptedCards) / float64(reviewedCards)
+	}
+	qualityGatePassed := summary.FailedChunks == 0 && len(failedChecks) == 0
+	reason := qualityVerdictReason(externalStatus, qualityGatePassed, reasons)
+	summary.LocalMetrics.LastFailureReason = firstNonEmpty(summary.LocalMetrics.LastFailureReason, reason)
+	summary.QualityVerdict = domain.QualityVerdict{
+		Verdict:           verdictStatus(externalStatus, qualityGatePassed),
+		ExternalStatus:    externalStatus,
+		Detector:          detector,
+		ScoreBefore:       scoreBefore,
+		ScoreAfter:        scoreAfter,
+		TargetScore:       targetScore,
+		QualityGatePassed: qualityGatePassed,
+		FailedChecks:      failedChecks,
+		Reason:            reason,
+	}
+}
+
+func defaultQualityVerdict(status domain.RoundStatus) domain.QualityVerdict {
+	verdict := domain.QualityVerdict{
+		Verdict:           domain.QualityVerdictUnverified,
+		ExternalStatus:    domain.ExternalDetectorUnavailable,
+		QualityGatePassed: status == domain.RoundCompleted,
+		FailedChecks:      []domain.CheckType{},
+		Reason:            "No external detector result is available for this round.",
+	}
+	if status == domain.RoundFailed {
+		verdict.Verdict = domain.QualityVerdictNeedsReview
+		verdict.QualityGatePassed = false
+		verdict.Reason = "The round did not complete successfully."
+	}
+	return verdict
+}
+
+func verdictStatus(externalStatus domain.ExternalDetectorStatus, qualityGatePassed bool) domain.QualityVerdictStatus {
+	switch {
+	case externalStatus == domain.ExternalDetectorUnavailable:
+		return domain.QualityVerdictUnverified
+	case externalStatus == domain.ExternalDetectorPassed && qualityGatePassed:
+		return domain.QualityVerdictAccepted
+	default:
+		return domain.QualityVerdictNeedsReview
+	}
+}
+
+func qualityVerdictReason(externalStatus domain.ExternalDetectorStatus, qualityGatePassed bool, reasons []string) string {
+	if externalStatus == domain.ExternalDetectorUnavailable {
+		return "External detector was unavailable; local checks were used, so this result is unverified."
+	}
+	if externalStatus == domain.ExternalDetectorFailed {
+		return "External detector score is above the target; review the highlighted passages."
+	}
+	if !qualityGatePassed {
+		if len(reasons) > 0 {
+			return reasons[0]
+		}
+		return "One or more quality checks failed and need review."
+	}
+	return "External detector and local quality checks passed."
+}
+
+func averageScore(chunks []domain.Chunk, selectScore func(domain.Chunk) *domain.AIScore) *float64 {
+	total := 0.0
+	count := 0
+	for _, chunk := range chunks {
+		if value, ok := domain.DecisionScore(selectScore(chunk)); ok {
+			total += value
+			count++
+		}
+	}
+	if count == 0 {
+		return nil
+	}
+	avg := total / float64(count)
+	return &avg
+}
+
+func averageTargetScore(chunks []domain.Chunk) *float64 {
+	total := 0.0
+	count := 0
+	for _, chunk := range chunks {
+		if chunk.OutputScore != nil && chunk.OutputScore.Target > 0 {
+			total += chunk.OutputScore.Target
+			count++
+			continue
+		}
+		if chunk.Score != nil && chunk.Score.Target > 0 {
+			total += chunk.Score.Target
+			count++
+		}
+	}
+	if count == 0 {
+		target := domain.DefaultRoundStopThreshold
+		return &target
+	}
+	avg := total / float64(count)
+	return &avg
+}
+
+func scoreExternalStatus(score *domain.AIScore) domain.ExternalDetectorStatus {
+	if score == nil {
+		return domain.ExternalDetectorUnavailable
+	}
+	if score.ExternalStatus != "" {
+		if score.ExternalStatus == domain.ExternalDetectorPassed && meetsScoreTarget(score) {
+			return domain.ExternalDetectorPassed
+		}
+		if score.ExternalStatus == domain.ExternalDetectorPassed {
+			return domain.ExternalDetectorFailed
+		}
+		return score.ExternalStatus
+	}
+	mode := ""
+	if score.Calibrated != nil {
+		mode = strings.TrimSpace(strings.ToLower(score.Calibrated.Mode))
+	}
+	detector := strings.TrimSpace(strings.ToLower(scoreDetectorName(score)))
+	if mode == "" || strings.Contains(mode, "offline") || strings.Contains(mode, "local") || strings.Contains(detector, "fallback") || strings.Contains(detector, "内部启发式") {
+		return domain.ExternalDetectorUnavailable
+	}
+	if meetsScoreTarget(score) {
+		return domain.ExternalDetectorPassed
+	}
+	return domain.ExternalDetectorFailed
+}
+
+func meetsScoreTarget(score *domain.AIScore) bool {
+	value, ok := domain.DecisionScore(score)
+	if !ok {
+		return false
+	}
+	target := score.Target
+	if target <= 0 {
+		target = domain.DefaultRoundStopThreshold
+	}
+	return value <= target
+}
+
+func scoreDetectorName(score *domain.AIScore) string {
+	if score == nil {
+		return ""
+	}
+	if score.Calibrated != nil && strings.TrimSpace(score.Calibrated.Detector) != "" {
+		return strings.TrimSpace(score.Calibrated.Detector)
+	}
+	return strings.TrimSpace(score.Detector)
+}
+
+func appendUniqueCheck(checks []domain.CheckType, check domain.CheckType) []domain.CheckType {
+	for _, existing := range checks {
+		if existing == check {
+			return checks
+		}
+	}
+	return append(checks, check)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func mergeLocalMetrics(target *domain.LocalMetrics, source domain.LocalMetrics) {
+	if target == nil {
+		return
+	}
+	target.DurationSeconds += source.DurationSeconds
+	target.TotalTokens += source.TotalTokens
+	target.AcceptedCards += source.AcceptedCards
+	target.RejectedCards += source.RejectedCards
+	target.PendingCards += source.PendingCards
+	target.LastFailureReason = firstNonEmpty(source.LastFailureReason, target.LastFailureReason)
+	reviewedCards := target.AcceptedCards + target.RejectedCards
+	if reviewedCards > 0 {
+		target.AcceptanceRate = float64(target.AcceptedCards) / float64(reviewedCards)
+	}
+}
+
+func collectCheckpointIDs(rounds []domain.Round) []string {
+	ids := make([]string, 0, len(rounds))
+	seen := map[string]struct{}{}
+	for _, round := range rounds {
+		checkpointID := strings.TrimSpace(round.CheckpointID)
+		if checkpointID == "" {
+			continue
+		}
+		if _, ok := seen[checkpointID]; ok {
+			continue
+		}
+		seen[checkpointID] = struct{}{}
+		ids = append(ids, checkpointID)
+	}
+	return ids
 }
 
 func maxActivityTime(current time.Time, candidate time.Time) time.Time {
@@ -862,6 +1183,13 @@ func buildChunkDiff(chunk domain.Chunk) domain.ChunkDiff {
 	}
 	inputAIRate := domain.EstimateAIRate(chunk.Text)
 	outputAIRate := domain.EstimateAIRate(chunk.Output)
+	detector := domain.AIRateDetectorName
+	switch {
+	case chunk.OutputScore != nil && chunk.OutputScore.Calibrated != nil && strings.TrimSpace(chunk.OutputScore.Calibrated.Detector) != "":
+		detector = chunk.OutputScore.Calibrated.Detector
+	case chunk.Score != nil && chunk.Score.Calibrated != nil && strings.TrimSpace(chunk.Score.Calibrated.Detector) != "":
+		detector = chunk.Score.Calibrated.Detector
+	}
 	return domain.ChunkDiff{
 		ID:             chunk.ID,
 		ParagraphIndex: chunk.ParagraphIndex,
@@ -872,7 +1200,10 @@ func buildChunkDiff(chunk domain.Chunk) domain.ChunkDiff {
 		CharDelta:      charDelta,
 		AIRate:         inputAIRate,
 		OutputAIRate:   outputAIRate,
-		Detector:       domain.AIRateDetectorName,
+		Detector:       detector,
+		Score:          chunk.Score,
+		OutputScore:    chunk.OutputScore,
+		Sentences:      append([]domain.SentenceDecision(nil), chunk.Sentences...),
 		State:          normalizeChunkReviewState(chunk.State),
 		Checks:         append([]domain.CheckResult(nil), chunk.Checks...),
 	}
@@ -918,6 +1249,102 @@ func selectChunkExportText(chunk domain.Chunk, selection string) string {
 		return chunk.Text
 	}
 	return chunk.Output
+}
+
+func (s *Service) decorateSessionRoundPlan(ctx context.Context, session *domain.Session) {
+	if session == nil {
+		return
+	}
+	totalRounds, nextRound, canStartNext := s.resolveRoundPlan(ctx, session)
+	session.TotalRounds = totalRounds
+	session.NextRound = nextRound
+	session.CanStartNext = canStartNext
+}
+
+func (s *Service) resolveRoundPlan(ctx context.Context, session *domain.Session) (totalRounds int, nextRound int, canStartNext bool) {
+	totalRounds = 1
+	if session == nil {
+		return totalRounds, 0, false
+	}
+
+	profile, ok := domain.Profiles[session.PromptProfile]
+	if !ok || profile.MaxRounds <= 0 {
+		profile.MaxRounds = 1
+	}
+	totalRounds = profile.MaxRounds
+
+	completed := 0
+	var latestCompleted *domain.Round
+	for index := range session.Rounds {
+		round := &session.Rounds[index]
+		if round.Status != domain.RoundCompleted {
+			continue
+		}
+		completed++
+		if latestCompleted == nil || round.Number > latestCompleted.Number {
+			latestCompleted = round
+		}
+	}
+
+	if session.Status == domain.SessionProcessing || session.Status == domain.SessionPaused {
+		if active, err := s.rounds.GetActiveBySession(ctx, session.ID); err == nil {
+			return totalRounds, active.Number, false
+		}
+	}
+
+	nextRound = len(session.Rounds) + 1
+	if nextRound < 1 {
+		nextRound = 1
+	}
+
+	switch session.PromptProfile {
+	case "cn":
+		totalRounds = 2
+		if latestCompleted != nil && s.shouldStopAfterRound(ctx, session, latestCompleted) {
+			totalRounds = completed
+		}
+	case "cn_single", "en":
+		totalRounds = 1
+	}
+
+	if totalRounds < completed {
+		totalRounds = completed
+	}
+	if totalRounds < 1 {
+		totalRounds = 1
+	}
+
+	canStartNext = session.Status == domain.SessionPending && nextRound <= totalRounds
+	if !canStartNext && nextRound > totalRounds {
+		nextRound = 0
+	}
+	if session.Status == domain.SessionCompleted {
+		canStartNext = false
+		nextRound = 0
+	}
+
+	return totalRounds, nextRound, canStartNext
+}
+
+func (s *Service) shouldStopAfterRound(ctx context.Context, session *domain.Session, round *domain.Round) bool {
+	if session == nil || round == nil {
+		return false
+	}
+	if s == nil || s.rounds == nil || s.manifests == nil || s.layout == nil {
+		return false
+	}
+	if session.PromptProfile != "cn" || round.Number < 1 {
+		return false
+	}
+	text, _, err := s.ReadOutput(ctx, session.ID, round.Number)
+	if err != nil {
+		return false
+	}
+	score, err := s.textScorer().Score(ctx, text)
+	if err != nil {
+		return false
+	}
+	return domain.MeetsRoundStopTarget(&score)
 }
 
 func IsCustomerVisibleError(err error) bool {

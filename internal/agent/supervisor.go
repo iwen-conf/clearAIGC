@@ -147,6 +147,13 @@ func (s *Supervisor) Recover(ctx context.Context, request domain.RecoveryRequest
 			out = append(out, schema.SystemMessage(`You are a recovery agent for document rewriting quality failures.
 Choose exactly one tool.
 Use retry_with_strict_prompt for template wording or formatting problems.
+Use retry_with_strict_prompt for factual invariant problems (numbers, dates, percentages, citations) as well.
+Use retry_with_strict_prompt for structure problems (numbering, bullets, explicit headings, line structure) as well.
+Use retry_with_strict_prompt for named entity problems (people, institutions, products, proper nouns, place names) as well.
+Use retry_with_strict_prompt for semantic similarity problems (embedding similarity dropped or core topic anchors collapsed) as well.
+Use retry_with_strict_prompt for terminology drift problems (technical terms, acronyms, identifiers, model names, file paths) as well.
+Use retry_with_strict_prompt for overly uniform sentence rhythm as well.
+Use retry_with_strict_prompt for readability regressions (overly dense, overly flat, or choppy sentence rhythm) as well.
 Use split_and_rewrite when the output expanded too much.
 Use accept_as_is only if the current output is still safe to keep.
 Do not answer with free text.`))

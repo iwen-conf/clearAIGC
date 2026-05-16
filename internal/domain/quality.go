@@ -3,11 +3,18 @@ package domain
 type CheckType string
 
 const (
-	CheckEmpty             CheckType = "empty"
-	CheckDisallowedPattern CheckType = "disallowed_pattern"
-	CheckMarkdownInjection CheckType = "markdown_injection"
-	CheckAbnormalExpansion CheckType = "abnormal_expansion"
-	CheckAIRateElevated    CheckType = "airate_elevated"
+	CheckEmpty               CheckType = "empty"
+	CheckDisallowedPattern   CheckType = "disallowed_pattern"
+	CheckMarkdownInjection   CheckType = "markdown_injection"
+	CheckAbnormalExpansion   CheckType = "abnormal_expansion"
+	CheckFactInvariant       CheckType = "fact_invariant"
+	CheckStructureBreak      CheckType = "structure_break"
+	CheckNamedEntityDrift    CheckType = "named_entity_drift"
+	CheckSemanticAnchorDrift CheckType = "semantic_anchor_drift"
+	CheckTerminologyDrift    CheckType = "terminology_drift"
+	CheckLowBurstiness       CheckType = "low_burstiness"
+	CheckReadabilityDrift    CheckType = "readability_drift"
+	CheckAIRateElevated      CheckType = "airate_elevated"
 )
 
 type CheckResult struct {

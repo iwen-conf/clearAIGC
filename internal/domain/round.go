@@ -36,6 +36,9 @@ type Session struct {
 	FileSizeBytes int64          `json:"fileSizeBytes"`
 	PromptProfile string         `json:"promptProfile"`
 	Status        SessionStatus  `json:"status"`
+	TotalRounds   int            `json:"totalRounds,omitempty"`
+	NextRound     int            `json:"nextRound,omitempty"`
+	CanStartNext  bool           `json:"canStartNextRound,omitempty"`
 	CreatedAt     time.Time      `json:"createdAt"`
 	UpdatedAt     time.Time      `json:"updatedAt"`
 	Rounds        []Round        `json:"rounds"`
@@ -65,6 +68,10 @@ type Round struct {
 
 func DeriveSessionStatus(session *Session) SessionStatus {
 	if len(session.Rounds) == 0 {
+		if session != nil && session.TotalRounds > 0 && session.NextRound == 0 {
+			session.NextRound = 1
+			session.CanStartNext = true
+		}
 		return SessionPending
 	}
 
@@ -77,8 +84,7 @@ func DeriveSessionStatus(session *Session) SessionStatus {
 	case RoundFailed:
 		return SessionFailed
 	case RoundCompleted:
-		profile, ok := Profiles[session.PromptProfile]
-		if ok && last.Number >= profile.MaxRounds {
+		if session != nil && session.TotalRounds > 0 && last.Number >= session.TotalRounds {
 			return SessionCompleted
 		}
 		return SessionPending

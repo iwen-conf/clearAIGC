@@ -18,6 +18,8 @@ You are a Structure Architect. Your objective is to inject burstiness (variance 
 3. Consolidate fragmented short sentences into complex, asymmetrical structures using semicolons or em-dashes.
 4. Invert grammatical structures (e.g., shift passive voice to active, use fronted adverbials).
 5. CRITICAL BOUNDARY: strictly preserve the logical sequence and academic validity of the arguments. Do not alter facts.
+6. Treat the supplied round objective, target risk score, and heuristic-risk patterns as hard constraints.
+7. Do not introduce any item from the supplied forbidden phrase list. Rewrite to lower the listed heuristic-risk signatures without changing meaning.
 
 [Output Format]
 Respond with JSON only, no prose, no code fences, schema:
@@ -37,13 +39,13 @@ type syntaxResponse struct {
 
 // Apply returns the restructured text and the total tokens consumed.
 // When the agent is not configured, it returns the original text unchanged and zero tokens.
-func (s *SyntaxRebuilder) Apply(ctx context.Context, requestID, text string) (string, int, error) {
+func (s *SyntaxRebuilder) Apply(ctx context.Context, requestID string, guidance RewriteGuidance) (string, int, error) {
 	client, _, ok := s.registry.Client(domain.AgentSyntaxRebuilder)
 	if !ok {
-		return text, 0, nil
+		return guidance.Text, 0, nil
 	}
 
-	prompt := fmt.Sprintf("%s\n\n[INPUT TEXT]\n%s", syntaxSystemPrompt, text)
+	prompt := formatRewritePrompt(syntaxSystemPrompt, guidance)
 	result, err := client.Complete(ctx, domain.LLMRequest{
 		RequestID: requestID + "-syntax",
 		Prompt:    prompt,

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/iwen-conf/Naturalize/internal/domain"
@@ -12,9 +13,11 @@ type fakeLLMClient struct {
 	in     int
 	out    int
 	err    error
+	last   domain.LLMRequest
 }
 
-func (f *fakeLLMClient) Complete(_ context.Context, _ domain.LLMRequest) (*domain.ProviderResult, error) {
+func (f *fakeLLMClient) Complete(_ context.Context, request domain.LLMRequest) (*domain.ProviderResult, error) {
+	f.last = request
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -51,7 +54,7 @@ func TestLexicalMutatorAppliesPatches(t *testing.T) {
 	mutator := NewLexicalMutator(r)
 
 	input := "It is crucial to delve into the dataset."
-	rewritten, tokens, err := mutator.Apply(context.Background(), "req-1", input)
+	rewritten, tokens, err := mutator.Apply(context.Background(), "req-1", RewriteGuidance{Text: input})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +71,7 @@ func TestLexicalMutatorUnconfiguredReturnsOriginal(t *testing.T) {
 	r := NewRegistry([]domain.AgentSetting{{Name: domain.AgentLexicalMutator, Protocol: domain.AgentProtocolChat}})
 	mutator := NewLexicalMutator(r)
 	input := "unchanged text"
-	out, tokens, err := mutator.Apply(context.Background(), "req", input)
+	out, tokens, err := mutator.Apply(context.Background(), "req", RewriteGuidance{Text: input})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,7 +97,7 @@ func TestSyntaxRebuilderParsesOutput(t *testing.T) {
 	}
 	r := newRegistryWithClient(domain.AgentSyntaxRebuilder, client)
 	rebuilder := NewSyntaxRebuilder(r)
-	out, tokens, err := rebuilder.Apply(context.Background(), "req", "original text")
+	out, tokens, err := rebuilder.Apply(context.Background(), "req", RewriteGuidance{Text: "original text"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,5 +106,46 @@ func TestSyntaxRebuilderParsesOutput(t *testing.T) {
 	}
 	if tokens != 20 {
 		t.Fatalf("unexpected tokens: %d", tokens)
+	}
+}
+
+func TestBuildRewriteGuidanceDerivesTargetAndForbiddenPhrases(t *testing.T) {
+	guidance := buildRewriteGuidance(
+		"在当前数字化协作的背景下，综合来看，这项工作具有现实意义。",
+		"第二轮进一步去模板化",
+	)
+
+	if guidance.TargetRiskScore <= 0 || guidance.TargetRiskScore >= guidance.RiskScore {
+		t.Fatalf("expected target risk score below current risk, got current=%.2f target=%.2f", guidance.RiskScore, guidance.TargetRiskScore)
+	}
+	if len(guidance.ForbiddenPhrases) == 0 {
+		t.Fatalf("expected forbidden phrases to be populated")
+	}
+}
+
+func TestLexicalMutatorPromptIncludesTargetRiskAndForbiddenPhrases(t *testing.T) {
+	client := &fakeLLMClient{output: `{"patches":[]}`}
+	r := newRegistryWithClient(domain.AgentLexicalMutator, client)
+	mutator := NewLexicalMutator(r)
+
+	guidance := RewriteGuidance{
+		Text:             "在当前数字化协作的背景下，综合来看，这项工作具有现实意义。",
+		RoundPrompt:      "第二轮进一步去模板化",
+		RiskScore:        0.58,
+		TargetRiskScore:  0.40,
+		RiskFeatures:     []string{"综合来看", "现实意义"},
+		ForbiddenPhrases: []string{"综合来看", "意义"},
+	}
+
+	if _, _, err := mutator.Apply(context.Background(), "req-prompt", guidance); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	prompt := client.last.Prompt
+	if !strings.Contains(prompt, "Target risk score: <= 0.40") {
+		t.Fatalf("expected target risk score in prompt, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "[FORBIDDEN PHRASES]") || !strings.Contains(prompt, "- 综合来看") {
+		t.Fatalf("expected forbidden phrase list in prompt, got %q", prompt)
 	}
 }

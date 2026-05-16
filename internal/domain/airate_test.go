@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEstimateAIRateDetectsChineseTemplateWriting(t *testing.T) {
 	t.Parallel()
@@ -27,4 +30,33 @@ func TestEstimateAIRateDetectsEnglishTemplateWriting(t *testing.T) {
 	if got := EstimateAIRate(text); got < 0.35 {
 		t.Fatalf("expected elevated aiRate, got %.2f", got)
 	}
+}
+
+func TestForbiddenAIPhrasesTracksLanguageSpecificLists(t *testing.T) {
+	t.Parallel()
+
+	cn := ForbiddenAIPhrases("在当前数字化协作的背景下，综合来看，这项工作具有现实意义。")
+	if !containsString(cn, "综合来看") || !containsString(cn, "意义") {
+		t.Fatalf("expected chinese forbidden phrases, got %v", cn)
+	}
+	if containsString(cn, "in conclusion") {
+		t.Fatalf("did not expect english phrase in chinese list: %v", cn)
+	}
+
+	en := ForbiddenAIPhrases("In conclusion, the team therefore reused the generic template.")
+	if !containsString(en, "in conclusion") || !containsString(en, "therefore") {
+		t.Fatalf("expected english forbidden phrases, got %v", en)
+	}
+	if containsString(en, "意义") {
+		t.Fatalf("did not expect chinese abstract term in english list: %v", en)
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want || strings.EqualFold(item, want) {
+			return true
+		}
+	}
+	return false
 }

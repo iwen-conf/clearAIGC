@@ -58,6 +58,30 @@ func (r *fakeSessionRepository) List(_ context.Context, filter domain.SessionLis
 	return items, total, nil
 }
 
+func (r *fakeSessionRepository) ListExpired(_ context.Context, cutoff time.Time, statuses []domain.SessionStatus) ([]domain.Session, error) {
+	statusSet := make(map[domain.SessionStatus]struct{}, len(statuses))
+	for _, status := range statuses {
+		statusSet[status] = struct{}{}
+	}
+
+	candidates := append([]domain.Session(nil), r.sessions...)
+	if r.session != nil {
+		candidates = append(candidates, *r.session)
+	}
+
+	expired := make([]domain.Session, 0, len(candidates))
+	for _, session := range candidates {
+		if _, ok := statusSet[session.Status]; !ok {
+			continue
+		}
+		if !session.UpdatedAt.Before(cutoff) {
+			continue
+		}
+		expired = append(expired, session)
+	}
+	return expired, nil
+}
+
 func (r *fakeSessionRepository) Delete(context.Context, uuid.UUID) error {
 	return nil
 }
@@ -435,7 +459,10 @@ func TestGetSessionStateReturnsPersistedState(t *testing.T) {
 
 	var resp struct {
 		Session struct {
-			ID string `json:"id"`
+			ID                string `json:"id"`
+			TotalRounds       int    `json:"totalRounds"`
+			NextRound         int    `json:"nextRound"`
+			CanStartNextRound bool   `json:"canStartNextRound"`
 		} `json:"session"`
 		Preview *struct {
 			Text string `json:"text"`
@@ -452,6 +479,9 @@ func TestGetSessionStateReturnsPersistedState(t *testing.T) {
 	}
 	if resp.Session.ID != sessionID.String() {
 		t.Fatalf("session id mismatch: %s", resp.Session.ID)
+	}
+	if resp.Session.TotalRounds != 2 || resp.Session.CanStartNextRound || resp.Session.NextRound != 0 {
+		t.Fatalf("session round plan mismatch: %+v", resp.Session)
 	}
 	if resp.Preview == nil || resp.Preview.Text != "legacy output" {
 		t.Fatalf("preview mismatch: %+v", resp.Preview)
@@ -522,7 +552,9 @@ func TestListSessionsSearchAndSort(t *testing.T) {
 				ProviderUsed string `json:"providerUsed"`
 			} `json:"progress"`
 			Metrics struct {
-				TotalRounds int `json:"totalRounds"`
+				TotalRounds       int  `json:"totalRounds"`
+				NextRound         int  `json:"nextRound"`
+				CanStartNextRound bool `json:"canStartNextRound"`
 			} `json:"metrics"`
 		} `json:"items"`
 		Size int `json:"size"`
@@ -541,6 +573,9 @@ func TestListSessionsSearchAndSort(t *testing.T) {
 	}
 	if resp.Items[0].Metrics.TotalRounds != 2 {
 		t.Fatalf("metrics mismatch: %+v", resp.Items[0].Metrics)
+	}
+	if !resp.Items[0].Metrics.CanStartNextRound || resp.Items[0].Metrics.NextRound != 1 {
+		t.Fatalf("next-round metrics mismatch: %+v", resp.Items[0].Metrics)
 	}
 }
 

@@ -151,6 +151,56 @@ func (r *SessionRepository) List(ctx context.Context, filter domain.SessionListF
 	return sessions, total, rows.Err()
 }
 
+func (r *SessionRepository) ListExpired(ctx context.Context, cutoff time.Time, statuses []domain.SessionStatus) ([]domain.Session, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	args := []any{cutoff}
+	placeholders := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		args = append(args, status)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, document_id, document_name, doc_id, origin_path, file_format, file_size_bytes, prompt_profile, status, created_at, updated_at
+		FROM sessions
+		WHERE updated_at < $1 AND status IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY updated_at ASC
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sessions := make([]domain.Session, 0, 16)
+	for rows.Next() {
+		var session domain.Session
+		if err := rows.Scan(
+			&session.ID,
+			&session.DocumentID,
+			&session.DocumentName,
+			&session.DocID,
+			&session.OriginPath,
+			&session.FileFormat,
+			&session.FileSizeBytes,
+			&session.PromptProfile,
+			&session.Status,
+			&session.CreatedAt,
+			&session.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		rounds, err := listRounds(ctx, r.pool, session.ID)
+		if err != nil {
+			return nil, err
+		}
+		session.Rounds = rounds
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
 func sessionListOrderBy(sort string) string {
 	switch sort {
 	case "created_at":

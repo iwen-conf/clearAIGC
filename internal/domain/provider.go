@@ -29,6 +29,8 @@ type ProviderResult struct {
 	InputTokens  int
 	OutputTokens int
 	RawRequestID string
+	Score        *AIScore
+	Sentences    []SentenceDecision
 }
 
 type Message struct {
