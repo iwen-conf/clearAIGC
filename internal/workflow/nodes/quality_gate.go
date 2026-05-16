@@ -1,30 +1,73 @@
 package nodes
 
 import (
+	"context"
 	"regexp"
 	"strings"
 
 	"github.com/iwen-conf/Naturalize/internal/domain"
+	"github.com/iwen-conf/Naturalize/internal/domain/scorer"
 )
 
+type QualityGateOption func(*QualityGate)
+
 type QualityGate struct {
-	disallowed []*regexp.Regexp
+	disallowed          []*regexp.Regexp
+	semantic            scorer.SemanticSimilarity
+	semanticThreshold   float64
+	readabilityMaxScore float64
 }
 
-func NewQualityGate() *QualityGate {
+func NewQualityGate(opts ...QualityGateOption) *QualityGate {
 	patterns := make([]*regexp.Regexp, 0, len(domain.DisallowedPatterns))
 	for _, pattern := range domain.DisallowedPatterns {
 		patterns = append(patterns, regexp.MustCompile(pattern))
 	}
-	return &QualityGate{disallowed: patterns}
+	gate := &QualityGate{
+		disallowed:          patterns,
+		semanticThreshold:   0.82,
+		readabilityMaxScore: 0.24,
+	}
+	for _, opt := range opts {
+		opt(gate)
+	}
+	return gate
 }
 
 func (g *QualityGate) Check(input, output string) domain.QualityReport {
+	return g.CheckWithContext(context.Background(), input, output)
+}
+
+func WithSemanticSimilarity(client scorer.SemanticSimilarity, threshold float64) QualityGateOption {
+	return func(g *QualityGate) {
+		g.semantic = client
+		if threshold > 0 {
+			g.semanticThreshold = threshold
+		}
+	}
+}
+
+func WithReadabilityMaxScore(maxScore float64) QualityGateOption {
+	return func(g *QualityGate) {
+		if maxScore > 0 {
+			g.readabilityMaxScore = maxScore
+		}
+	}
+}
+
+func (g *QualityGate) CheckWithContext(ctx context.Context, input, output string) domain.QualityReport {
 	checks := []domain.CheckResult{
 		g.checkEmpty(output),
 		g.checkDisallowed(output),
 		g.checkMarkdown(output),
 		g.checkExpansion(input, output),
+		g.checkFactInvariants(input, output),
+		g.checkStructureBreak(input, output),
+		g.checkNamedEntityDrift(input, output),
+		g.checkSemanticAnchorDrift(ctx, input, output),
+		g.checkTerminologyDrift(input, output),
+		g.checkLowBurstiness(input, output),
+		g.checkReadabilityDrift(input, output),
 		g.checkAIRateElevated(input, output),
 	}
 
@@ -119,6 +162,105 @@ func (g *QualityGate) checkExpansion(input, output string) domain.CheckResult {
 		return domain.CheckResult{Type: domain.CheckAbnormalExpansion, Passed: false, Reason: "The rewritten text expanded far beyond the source passage."}
 	}
 	return domain.CheckResult{Type: domain.CheckAbnormalExpansion, Passed: true}
+}
+
+func (g *QualityGate) checkFactInvariants(input, output string) domain.CheckResult {
+	missing, added := diffFactTokens(collectFactTokens(input), collectFactTokens(output))
+	if len(missing) == 0 && len(added) == 0 {
+		return domain.CheckResult{Type: domain.CheckFactInvariant, Passed: true}
+	}
+	return domain.CheckResult{
+		Type:   domain.CheckFactInvariant,
+		Passed: false,
+		Reason: buildFactInvariantReason(missing, added),
+	}
+}
+
+func (g *QualityGate) checkStructureBreak(input, output string) domain.CheckResult {
+	flagged, reason := evaluateStructureBreak(input, output)
+	if !flagged {
+		return domain.CheckResult{Type: domain.CheckStructureBreak, Passed: true}
+	}
+	return domain.CheckResult{
+		Type:   domain.CheckStructureBreak,
+		Passed: false,
+		Reason: reason,
+	}
+}
+
+func (g *QualityGate) checkNamedEntityDrift(input, output string) domain.CheckResult {
+	missing, added := diffNamedEntities(collectNamedEntities(input), collectNamedEntities(output))
+	if len(missing) == 0 && len(added) == 0 {
+		return domain.CheckResult{Type: domain.CheckNamedEntityDrift, Passed: true}
+	}
+	return domain.CheckResult{
+		Type:   domain.CheckNamedEntityDrift,
+		Passed: false,
+		Reason: buildNamedEntityReason(missing, added),
+	}
+}
+
+func (g *QualityGate) checkSemanticAnchorDrift(ctx context.Context, input, output string) domain.CheckResult {
+	if g.semantic != nil {
+		if result, err := g.semantic.Compare(ctx, input, output); err == nil {
+			if result.Score >= g.semanticThreshold {
+				return domain.CheckResult{Type: domain.CheckSemanticAnchorDrift, Passed: true}
+			}
+			return domain.CheckResult{
+				Type:   domain.CheckSemanticAnchorDrift,
+				Passed: false,
+				Reason: buildSemanticSimilarityReason(result.Score, g.semanticThreshold, result.Mode),
+			}
+		}
+	}
+
+	flagged, reason := evaluateSemanticAnchorDrift(input, output)
+	if !flagged {
+		return domain.CheckResult{Type: domain.CheckSemanticAnchorDrift, Passed: true}
+	}
+	return domain.CheckResult{
+		Type:   domain.CheckSemanticAnchorDrift,
+		Passed: false,
+		Reason: reason,
+	}
+}
+
+func (g *QualityGate) checkTerminologyDrift(input, output string) domain.CheckResult {
+	missing, added := diffProtectedTerms(collectProtectedTerms(input), collectProtectedTerms(output))
+	if len(missing) == 0 && len(added) == 0 {
+		return domain.CheckResult{Type: domain.CheckTerminologyDrift, Passed: true}
+	}
+	return domain.CheckResult{
+		Type:   domain.CheckTerminologyDrift,
+		Passed: false,
+		Reason: buildTerminologyDriftReason(missing, added),
+	}
+}
+
+func (g *QualityGate) checkLowBurstiness(input, output string) domain.CheckResult {
+	inputRhythm := analyzeSentenceRhythm(input)
+	outputRhythm := analyzeSentenceRhythm(output)
+	if !shouldFlagLowBurstiness(inputRhythm, outputRhythm) {
+		return domain.CheckResult{Type: domain.CheckLowBurstiness, Passed: true}
+	}
+	return domain.CheckResult{
+		Type:   domain.CheckLowBurstiness,
+		Passed: false,
+		Reason: buildLowBurstinessReason(inputRhythm, outputRhythm),
+	}
+}
+
+func (g *QualityGate) checkReadabilityDrift(input, output string) domain.CheckResult {
+	inputMetrics := scorer.EvaluateReadability(input)
+	outputMetrics := scorer.EvaluateReadability(output)
+	if !scorer.ShouldFlagReadabilityRegression(inputMetrics, outputMetrics, g.readabilityMaxScore) {
+		return domain.CheckResult{Type: domain.CheckReadabilityDrift, Passed: true}
+	}
+	return domain.CheckResult{
+		Type:   domain.CheckReadabilityDrift,
+		Passed: false,
+		Reason: scorer.BuildReadabilityReason(inputMetrics, outputMetrics),
+	}
 }
 
 func (g *QualityGate) checkAIRateElevated(input, output string) domain.CheckResult {

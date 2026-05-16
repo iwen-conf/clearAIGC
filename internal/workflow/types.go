@@ -30,6 +30,8 @@ type State struct {
 	ScoreTotal            int
 	QualityStats          *domain.QualityStats
 	RecoveryJustification string
+	ChunkScore            *domain.AIScore
+	StopAfterRound        bool
 }
 
 type ResumeState struct {

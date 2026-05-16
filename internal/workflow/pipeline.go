@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/iwen-conf/Naturalize/internal/domain"
+	"github.com/iwen-conf/Naturalize/internal/domain/scorer"
 	"github.com/iwen-conf/Naturalize/internal/infra/llm"
 	"github.com/iwen-conf/Naturalize/internal/workflow/nodes"
 )
@@ -24,6 +25,7 @@ type Pipeline struct {
 	exporter    *nodes.Exporter
 	providers   *llm.ProviderChain
 	rewriter    domain.Rewriter
+	scorer      domain.AIScorer
 	agent       domain.RecoveryAgent
 	checkpoints domain.CheckpointStore
 	publisher   domain.ProgressPublisher
@@ -52,6 +54,7 @@ func NewPipeline(
 		exporter:    exporter,
 		providers:   providers,
 		rewriter:    rewriter,
+		scorer:      scorer.NewComposite(),
 		agent:       agent,
 		checkpoints: checkpoints,
 		publisher:   publisher,
@@ -71,6 +74,19 @@ func (p *Pipeline) Execute(ctx context.Context, input Input) (*State, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func (p *Pipeline) SetScorer(textScorer domain.AIScorer) {
+	if textScorer != nil {
+		p.scorer = textScorer
+	}
+}
+
+func (p *Pipeline) textScorer() domain.AIScorer {
+	if p != nil && p.scorer != nil {
+		return p.scorer
+	}
+	return scorer.NewComposite()
 }
 
 func (p *Pipeline) compile() error {
@@ -198,6 +214,13 @@ func (p *Pipeline) batchLLM(ctx context.Context, state *State) (*State, error) {
 		}
 
 		state.RawOutputs[index] = result.OutputText
+		if result.Score != nil {
+			chunkScore := *result.Score
+			state.Manifest.Chunks[index].OutputScore = &chunkScore
+		}
+		if len(result.Sentences) > 0 {
+			state.Manifest.Chunks[index].Sentences = append([]domain.SentenceDecision(nil), result.Sentences...)
+		}
 		state.ProviderUsed = result.Provider
 		state.TotalTokens += int64(result.InputTokens + result.OutputTokens)
 
@@ -239,11 +262,11 @@ func (p *Pipeline) batchLLM(ctx context.Context, state *State) (*State, error) {
 	})
 }
 
-func (p *Pipeline) qualityGate(_ context.Context, state *State) (*State, error) {
+func (p *Pipeline) qualityGate(ctx context.Context, state *State) (*State, error) {
 	state.Reports = make([]domain.QualityReport, 0, len(state.Manifest.Chunks))
 	state.PendingRecovery = state.PendingRecovery[:0]
 	for index, chunk := range state.Manifest.Chunks {
-		report := p.gate.Check(chunk.Text, state.RawOutputs[index])
+		report := p.gate.CheckWithContext(ctx, chunk.Text, state.RawOutputs[index])
 		report.ChunkID = chunk.ID
 		state.Reports = append(state.Reports, report)
 		if !report.AllPassed {
@@ -402,30 +425,38 @@ func (p *Pipeline) merge(_ context.Context, state *State) (*State, error) {
 		}
 	}
 
-	chunkMap := make(map[string]string, len(state.Manifest.Chunks))
+	state.MergedOutput = buildMergedOutput(state.Manifest, state.FinalOutputs)
+	if inputText := strings.TrimSpace(state.ParsedText); inputText != "" {
+		inputRate := domain.EstimateAIRate(inputText)
+		outputRate := domain.EstimateAIRate(state.MergedOutput)
+		if outputRate > inputRate {
+			for index := range state.Manifest.Chunks {
+				state.FinalOutputs[index] = state.Manifest.Chunks[index].Text
+			}
+			state.MergedOutput = buildMergedOutput(state.Manifest, state.FinalOutputs)
+			appendRecoveryJustification(&state.RecoveryJustification,
+				fmt.Sprintf("round rollback applied because merged heuristic risk increased from %.2f to %.2f", inputRate, outputRate))
+		}
+	}
+
 	for index := range state.Manifest.Chunks {
+		inputScore, _ := p.textScorer().Score(context.Background(), state.Manifest.Chunks[index].Text)
+		outputScore, _ := p.textScorer().Score(context.Background(), state.FinalOutputs[index])
 		state.Manifest.Chunks[index].Output = state.FinalOutputs[index]
 		state.Manifest.Chunks[index].Status = domain.ChunkStatusFromReport(state.Reports[index])
 		state.Manifest.Chunks[index].Checks = append([]domain.CheckResult(nil), state.Reports[index].Checks...)
 		state.Manifest.Chunks[index].AIRate = domain.EstimateAIRate(state.Manifest.Chunks[index].Text)
+		state.Manifest.Chunks[index].Score = &inputScore
+		state.Manifest.Chunks[index].OutputScore = &outputScore
 		state.Manifest.Chunks[index].State = domain.ChunkReviewPending
-		chunkMap[state.Manifest.Chunks[index].ID] = state.FinalOutputs[index]
 	}
-	paragraphs := make([]string, 0, len(state.Manifest.Paragraphs))
-	separator := ""
-	if state.Manifest.ChunkMetric == domain.ChunkMetricWord {
-		separator = " "
-	}
-	for _, mapping := range state.Manifest.Paragraphs {
-		parts := make([]string, 0, len(mapping.ChunkIDs))
-		for _, chunkID := range mapping.ChunkIDs {
-			parts = append(parts, strings.TrimSpace(chunkMap[chunkID]))
-		}
-		paragraphs = append(paragraphs, strings.TrimSpace(strings.Join(parts, separator)))
-	}
-	state.MergedOutput = strings.TrimSpace(strings.Join(paragraphs, "\n\n"))
 	state.QualityStats = p.gate.Stats(state.Reports)
 	state.ScoreTotal = p.gate.Score(state.QualityStats)
+	chunkScore, _ := p.textScorer().Score(context.Background(), state.MergedOutput)
+	state.ChunkScore = &chunkScore
+	if state.Input.Round.Number >= 1 && domain.MeetsRoundStopTarget(&chunkScore) {
+		state.StopAfterRound = true
+	}
 	return state, nil
 }
 
@@ -492,4 +523,37 @@ func failedReasons(checks []domain.CheckResult) []string {
 		return []string{"The output did not pass quality review."}
 	}
 	return out
+}
+
+func buildMergedOutput(manifest *domain.Manifest, outputs []string) string {
+	chunkMap := make(map[string]string, len(manifest.Chunks))
+	for index := range manifest.Chunks {
+		chunkMap[manifest.Chunks[index].ID] = outputs[index]
+	}
+
+	paragraphs := make([]string, 0, len(manifest.Paragraphs))
+	separator := ""
+	if manifest.ChunkMetric == domain.ChunkMetricWord {
+		separator = " "
+	}
+	for _, mapping := range manifest.Paragraphs {
+		parts := make([]string, 0, len(mapping.ChunkIDs))
+		for _, chunkID := range mapping.ChunkIDs {
+			parts = append(parts, strings.TrimSpace(chunkMap[chunkID]))
+		}
+		paragraphs = append(paragraphs, strings.TrimSpace(strings.Join(parts, separator)))
+	}
+	return strings.TrimSpace(strings.Join(paragraphs, "\n\n"))
+}
+
+func appendRecoveryJustification(current *string, note string) {
+	note = strings.TrimSpace(note)
+	if note == "" {
+		return
+	}
+	if strings.TrimSpace(*current) == "" {
+		*current = note
+		return
+	}
+	*current += "\n" + note
 }
