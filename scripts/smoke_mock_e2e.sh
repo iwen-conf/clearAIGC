@@ -6,6 +6,11 @@ COMPOSE_FILE="$ROOT_DIR/deploy/docker-compose.yml"
 SAMPLE_FILE="$ROOT_DIR/testdata/sample.txt"
 BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
 
+if [[ "${1:-}" == "--evaluate" ]]; then
+  shift
+  exec "$ROOT_DIR/scripts/evaluate.sh" "$@"
+fi
+
 cleanup() {
   docker compose -f "$COMPOSE_FILE" down --remove-orphans >/dev/null 2>&1 || true
 }
